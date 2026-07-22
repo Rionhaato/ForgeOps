@@ -12,9 +12,32 @@ alongside Claude Code and Codex, and gets out of the way otherwise.
 
 ## Status
 
-Under active implementation. See `docs/architecture-decision.md` for why
-this project exists and what it deliberately does not build, and
-`.agent/HANDOFF.md` for current progress.
+Under active implementation. Phase 2A shipped a working, tested CLI
+foundation: `forgeops doctor`, `forgeops status`, and `forgeops audit` are
+real, read-only, and covered by 146 passing tests. See
+`docs/architecture-decision.md` for why this project exists and what it
+deliberately does not build, `docs/cli-architecture.md` for how the CLI
+is put together, and `.agent/HANDOFF.md` for current progress.
+
+## Usage (Phase 2A)
+
+```powershell
+pip install -e ".[dev]"
+
+forgeops doctor              # environment/foundation health checks
+forgeops status               # concise repository state
+forgeops audit                  # read-only security/hygiene audit
+
+forgeops <command> --json        # structured JSON instead of human-readable text
+forgeops <command> --repo <path> # inspect a repository other than the current directory
+python -m forgeops <command>     # equivalent to the forgeops console script
+```
+
+Every other command named in the long-term design (`init`, `checkpoint`,
+`handoff`, `changed`, `test`, `release-check`, `process-list`, `cleanup`,
+`worktree`, `agents`, `approvals`, `validate-config`, `install`,
+`uninstall`) is registered but not yet implemented — see
+`docs/phase2a-validation.md` for the exact recommended Phase 2B scope.
 
 ## Layout
 

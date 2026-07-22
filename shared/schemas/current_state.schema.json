@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://forgeops.local/schemas/current_state.schema.json",
+  "title": "ForgeOps .agent/CURRENT_STATE.json",
+  "description": "Machine-readable project-state snapshot. Full field set finalized in Phase 3; forgeops/state/schema.py currently checks only the required top-level keys listed here.",
+  "type": "object",
+  "required": ["schema_version", "branch", "mission", "completed_work", "blockers", "next_action"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "repository": { "type": "object" },
+    "branch": { "type": ["string", "null"] },
+    "head": { "type": ["string", "null"] },
+    "remote": { "type": "object" },
+    "changed_files": { "type": "object" },
+    "mission": { "type": "string" },
+    "completed_work": { "type": "array", "items": { "type": "string" } },
+    "recent_tests": { "type": "array" },
+    "blockers": { "type": "array" },
+    "active_agents": { "type": "array" },
+    "owned_files": { "type": "array" },
+    "active_worktrees": { "type": "array" },
+    "pending_approvals": { "type": "array" },
+    "background_processes": { "type": "array" },
+    "last_checkpoint": { "type": "object" },
+    "next_action": { "type": "string" }
+  }
+}

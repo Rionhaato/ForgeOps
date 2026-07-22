@@ -61,6 +61,18 @@ Per-command specifics:
   for the full explanation. This precedence was defined in Phase 2A and
   is unchanged by Phase 2C - `release-check` simply exercises it for the
   first time.
+- **`checkpoint` / `handoff`** (Phase 2C): `REPO_NOT_FOUND` (4) /
+  `COMMAND_EXECUTION_FAILURE` (5, git unavailable) as above; a
+  `COMMAND_EXECUTION_FAILURE` (5) also results if the atomic write itself
+  fails (disk full, permission denied - a `fail`-status
+  `checkpoint-write`/`handoff-write` check, mirroring how `doctor`'s
+  `log-dir-writable` check handles a write failure); otherwise
+  `WARNINGS_PRESENT` (1) if the previous `.agent/CURRENT_STATE.json` had
+  an unsupported `schema_version` (recovered with fresh narrative
+  defaults, not blocked); otherwise `SUCCESS` (0). A dirty working tree
+  is not itself a warning for either command - like `status`, capturing
+  the working-tree shape *is* the point, not a fault to flag. See
+  `docs/checkpoint-and-handoff.md`.
 
 ## Stability guarantee
 

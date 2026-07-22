@@ -221,6 +221,103 @@ def test_release_check_debug_flag_lets_exception_propagate(git_repo, monkeypatch
         main(["--debug", "release-check", "--repo", str(git_repo)])
 
 
+def test_checkpoint_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in checkpoint")
+
+    monkeypatch.setattr("forgeops.cli.checkpoint_cmd.run_checkpoint", boom)
+    exit_code = main(["checkpoint", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in checkpoint" in captured.err
+    # A crash before the write step must never leave a partial state file.
+    assert not (git_repo / ".agent" / "CURRENT_STATE.json").exists()
+
+
+def test_checkpoint_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in checkpoint")
+
+    monkeypatch.setattr("forgeops.cli.checkpoint_cmd.run_checkpoint", boom)
+    exit_code = main(["checkpoint", "--repo", str(git_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_checkpoint_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in checkpoint")
+
+    monkeypatch.setattr("forgeops.cli.checkpoint_cmd.run_checkpoint", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in checkpoint"):
+        main(["--debug", "checkpoint", "--repo", str(git_repo)])
+
+
+def test_handoff_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in handoff")
+
+    monkeypatch.setattr("forgeops.cli.handoff_cmd.run_handoff", boom)
+    exit_code = main(["handoff", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in handoff" in captured.err
+    assert not (git_repo / ".agent" / "HANDOFF.md").exists()
+
+
+def test_handoff_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in handoff")
+
+    monkeypatch.setattr("forgeops.cli.handoff_cmd.run_handoff", boom)
+    exit_code = main(["handoff", "--repo", str(git_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_handoff_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in handoff")
+
+    monkeypatch.setattr("forgeops.cli.handoff_cmd.run_handoff", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in handoff"):
+        main(["--debug", "handoff", "--repo", str(git_repo)])
+
+
+def test_checkpoint_dry_run_flag_reaches_run_checkpoint(git_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_checkpoint(repo_arg, dry_run=False):
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.checkpoint import run_checkpoint as real
+        return real(repo_arg, write_log=False, dry_run=dry_run)
+
+    monkeypatch.setattr("forgeops.cli.checkpoint_cmd.run_checkpoint", fake_run_checkpoint)
+    main(["checkpoint", "--repo", str(git_repo), "--dry-run"])
+    assert captured_kwargs["dry_run"] is True
+
+
+def test_handoff_dry_run_flag_reaches_run_handoff(git_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_handoff(repo_arg, dry_run=False):
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.handoff import run_handoff as real
+        return real(repo_arg, write_log=False, dry_run=dry_run)
+
+    monkeypatch.setattr("forgeops.cli.handoff_cmd.run_handoff", fake_run_handoff)
+    main(["handoff", "--repo", str(git_repo), "--dry-run"])
+    assert captured_kwargs["dry_run"] is True
+
+
 def test_test_command_requires_a_mode_flag(git_repo, capsys):
     exit_code = main(["test", "--repo", str(git_repo)])
     captured = capsys.readouterr()

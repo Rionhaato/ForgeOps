@@ -1,4 +1,4 @@
-# CLI Architecture (Phase 2A + 2B + 2C)
+# CLI Architecture (Phase 2A + 2B + 2C + Phase 2C checkpoint/handoff)
 
 ## Module layout
 
@@ -14,6 +14,8 @@ forgeops/
     changed.py              forgeops changed
     test.py                  forgeops test --targeted | --full
     release_check.py          forgeops release-check (aggregates doctor/audit/test --full)
+    checkpoint.py              forgeops checkpoint (writes .agent/CURRENT_STATE.json)
+    handoff.py                 forgeops handoff (writes .agent/HANDOFF.md, derived from checkpoint data)
   core/
     paths.py             repo-root discovery, path normalization
     git.py                read-only git-state inspection (status entries, renames, ahead/behind, ...)
@@ -31,7 +33,9 @@ forgeops/
     secret_scan.py          secret-pattern scanning, redacted findings, scoped allow-secret marker
     dangerous_files.py      dangerous-filename pattern matching
   state/
-    schema.py              lightweight .agent/CURRENT_STATE.json validation
+    schema.py              lightweight .agent/CURRENT_STATE.json validation, supported schema-version set
+    checkpoint.py            pure, deterministic CURRENT_STATE.json document builder (shared by checkpoint + handoff)
+    atomic_write.py          atomic same-filesystem temp-file-then-replace text writer
   reporting/
     logs.py                 logs/<command>/<timestamp>/ persistence
   testing/
@@ -48,8 +52,12 @@ write_log=True, ...) -> CommandResult` and `render_human(result) -> str`.
 shape. `release_check.py` (Phase 2C) follows the same shape too
 (`run_release_check`, `render_human`), but its `run_*` function itself
 calls `run_doctor`/`run_audit`/`run_full_test` internally rather than
-re-deriving their checks - see `docs/release-check.md`. `run_*` never
-touches `sys.argv`,
+re-deriving their checks - see `docs/release-check.md`. `checkpoint.py`
+and `handoff.py` (Phase 2C) also follow the same shape (`run_checkpoint`/
+`run_handoff`, `render_human`, both accepting an additional `dry_run`
+keyword) - see `docs/checkpoint-and-handoff.md` for their state-writing
+behavior, atomic-write guarantee, and the consistency model between the
+two. `run_*` never touches `sys.argv`,
 `print`, or `sys.exit` — it's a pure function over its arguments, which is
 what makes it directly unit-testable (see `tests/integration/test_cli_*.py`)
 without spawning a subprocess. `main()` in `forgeops/cli/__init__.py` is
@@ -177,11 +185,12 @@ Only a genuinely unexpected exception (a real bug) is caught here:
 - `forgeops audit`'s secret scan is line-based pattern matching, not a
   parser — see `docs/audit-security-model.md` for what this does and
   doesn't catch.
-- `forgeops init`, `checkpoint`, `handoff`, `process-list`, `cleanup`,
-  `worktree`, `agents`, `approvals`, `validate-config`, `install`,
-  `uninstall` are registered in the argument parser (so `forgeops <name>
-  --help` works and produces a clean error) but not implemented —
-  invoking any of them prints "not yet implemented" to stderr and exits
-  1. `forgeops test` without `--targeted` or `--full` behaves the same
-  way. See `docs/phase2c-validation.md` for the exact recommended next
-  scope.
+- `forgeops init`, `process-list`, `cleanup`, `worktree`, `agents`,
+  `approvals`, `validate-config`, `install`, `uninstall` are registered
+  in the argument parser (so `forgeops <name> --help` works and produces
+  a clean error) but not implemented — invoking any of them prints "not
+  yet implemented" to stderr and exits 1. `forgeops test` without
+  `--targeted` or `--full` behaves the same way. `checkpoint` and
+  `handoff` are now implemented (see `docs/checkpoint-and-handoff.md`).
+  See `docs/phase2c-validation.md` for prior recommended-next-scope
+  notes.

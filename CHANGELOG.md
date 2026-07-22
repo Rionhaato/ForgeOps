@@ -6,6 +6,50 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Phase 2C — Checkpoint and Handoff
+- Implemented `forgeops checkpoint`: writes a deterministic, atomic
+  snapshot to `.agent/CURRENT_STATE.json` (the existing canonical
+  location). Objective fields (branch, HEAD, working-tree shape,
+  detected stack, remote presence) are recomputed from git/the
+  filesystem every call; narrative fields a human or prior session wrote
+  (mission, completed_work, blockers, next_action, ...) are carried
+  forward unchanged rather than reinvented.
+- Implemented `forgeops handoff`: writes a concise markdown summary to
+  `.agent/HANDOFF.md` (the existing canonical location), derived from
+  the exact same deterministic data `checkpoint` computes plus a small
+  set of constants mirrored from `CLAUDE.md` (standard validation
+  commands, approval boundaries, prohibited actions) - never from
+  free-form model reasoning.
+- New shared primitives: `forgeops/state/atomic_write.py` (same-
+  filesystem temp-file-then-`os.replace()` atomic text writer, used by
+  both commands - no partially-written state file is ever visible, even
+  across a crash) and `forgeops/state/checkpoint.py`
+  (`build_checkpoint_data()`, the one pure function behind both
+  commands' data). `forgeops/state/schema.py` gained
+  `SUPPORTED_SCHEMA_VERSIONS`/`is_supported_schema_version()` as the
+  single source of truth for which `CURRENT_STATE.json` versions this
+  install can safely merge - an unsupported (e.g. future) version is a
+  `warning`, never a hard failure, and never guessed at.
+- Both commands support `--dry-run` (preview, write nothing), `--json`/
+  human output, and never touch anything outside their one documented
+  file (plus the same `logs/<command>/` side-channel every other command
+  already uses) - enforced by dedicated regression tests that snapshot
+  the whole working tree before/after.
+- 79 new tests (up from 300 to 379): atomic-write behavior (including
+  simulated write failures leaving no partial file), the pure
+  checkpoint-data builder (clean/dirty/staged/untracked/spacey-path/no-
+  commits-yet repositories, schema versioning, secret-shaped env values
+  never leaking), full CLI integration coverage for both commands
+  (human/JSON/dry-run/atomic-replace/INTERNAL_ERROR/write-failure
+  paths), and regression tests proving `test --targeted`/`test --full`/
+  `release-check`/every inspection command are unchanged and that
+  `checkpoint`/`handoff` only ever modify their documented state paths.
+- New doc: `docs/checkpoint-and-handoff.md` (state-file locations,
+  determinism model, atomic-write guarantee, schema/version behavior,
+  consistency model between the two commands, exit codes, secret
+  safety, and how a future agent should resume from a handoff). Updates
+  to `docs/cli-architecture.md`, `docs/cli-exit-codes.md`, `README.md`.
+
 ### Phase 2C — Full Test Suite and Release Check
 - Implemented `forgeops test --full`: runs the complete supported test
   suite(s) for every detected technology, ignoring changed files

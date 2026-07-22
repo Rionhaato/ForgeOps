@@ -188,3 +188,68 @@ the exact commit message to use once authorization is given. Lesson:
 each checkpoint's own instructions on commit policy take precedence over
 the pattern established by prior checkpoints - don't assume the same
 commit-at-the-end behavior carries forward without re-checking.
+
+## 2026-07-22 — checkpoint/handoff preserve narrative, recompute objective facts
+
+`forgeops checkpoint` writes `.agent/CURRENT_STATE.json` and `forgeops
+handoff` writes `.agent/HANDOFF.md` - both the *existing* canonical
+locations, not new parallel files, per this checkpoint's explicit
+instruction to reuse the existing state schema and files where
+practical. The core design choice: fields a deterministic script can
+honestly derive from git/the filesystem (branch, HEAD, working-tree
+shape, detected stack, remote presence) are recomputed fresh on every
+call; fields that are inherently narrative (mission, completed_work,
+blockers, next_action, last_checkpoint.phase) are carried forward
+unchanged from whatever `CURRENT_STATE.json` already existed, never
+reinvented or guessed at. No deterministic script can honestly answer
+"what phase of the mission is this" from git state alone - trying to
+would have meant either inventing plausible-sounding prose (violates
+"never invoke model reasoning" for these commands) or discarding real
+continuity information every time checkpoint runs. If no previous
+document exists, narrative fields start empty rather than fabricated.
+
+## 2026-07-22 — checkpoint and handoff each write exactly one file; no dual-file transaction
+
+Considered making one combined operation write both `CURRENT_STATE.json`
+and `HANDOFF.md` atomically together (transaction-like, with rollback).
+Rejected: there is no code path where a single command invocation needs
+to write both files, so building cross-file transaction machinery would
+have been unused complexity. `forgeops handoff` instead *reads* whatever
+`CURRENT_STATE.json` currently exists (computing a fresh snapshot via
+the same shared `build_checkpoint_data()` if none does) and writes only
+`HANDOFF.md`. Each command's own single-file write is atomic
+(temp-file-then-`os.replace()`, see `forgeops/state/atomic_write.py`);
+running both commands back to back is two independently-safe atomic
+operations, not one transaction. Documented explicitly in
+`docs/checkpoint-and-handoff.md` so a future session doesn't assume
+partial-failure-across-both-files is a real failure mode.
+
+## 2026-07-22 — unsupported CURRENT_STATE.json schema_version is a warning, never a block
+
+If an existing `.agent/CURRENT_STATE.json` has a `schema_version` this
+version of forgeops doesn't recognize (checked against the single
+source of truth, `forgeops/state/schema.py:SUPPORTED_SCHEMA_VERSIONS`),
+both `checkpoint` and `handoff` report it as a `warning`-status check
+and reset narrative fields to empty defaults rather than attempting to
+interpret an unknown future document shape - then still write a fresh,
+valid `schema_version: 1` document. Chosen over refusing to run
+entirely: a session that needs to checkpoint/hand off should still be
+able to, even from a repository whose state file was last touched by a
+newer version of forgeops; losing that one run's narrative continuity
+(visible and explained via the warning) is preferable to blocking
+entirely.
+
+## 2026-07-22 — approval boundaries and standard validation commands mirrored as constants, not re-derived from CLAUDE.md
+
+`forgeops/cli/handoff.py` hardcodes `STANDARD_VALIDATION_COMMANDS` and
+`APPROVAL_BOUNDARY_CATEGORIES` as small constants mirroring `CLAUDE.md`
+sections 8 and 11, rather than parsing `CLAUDE.md`'s prose/fenced code
+block at runtime. Parsing would have been more DRY but fragile (a
+heading rename or reformatted code fence silently breaks extraction with
+no test able to catch the mismatch until a real handoff document came
+out wrong). The constants are explicitly commented as mirroring specific
+`CLAUDE.md` sections so a future edit to either place has a fighting
+chance of updating the other; a future phase could add a regression test
+that fails if `CLAUDE.md`'s section 8 code fence and this constant tuple
+diverge, but that wasn't built now (out of scope for this bounded
+checkpoint) - noted here as a known gap, not hidden.

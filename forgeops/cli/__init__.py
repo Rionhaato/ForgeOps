@@ -24,7 +24,9 @@ from pathlib import Path
 
 from forgeops.cli import audit as audit_cmd
 from forgeops.cli import changed as changed_cmd
+from forgeops.cli import checkpoint as checkpoint_cmd
 from forgeops.cli import doctor as doctor_cmd
+from forgeops.cli import handoff as handoff_cmd
 from forgeops.cli import release_check as release_check_cmd
 from forgeops.cli import status as status_cmd
 from forgeops.cli import test as test_cmd
@@ -36,7 +38,7 @@ from forgeops.security.redact import redact_text
 
 PHASE_2A_COMMANDS = ("doctor", "status", "audit")
 NOT_YET_IMPLEMENTED_COMMANDS = (
-    "init", "checkpoint", "handoff",
+    "init",
     "process-list", "cleanup", "worktree", "agents", "approvals",
     "validate-config", "install", "uninstall",
 )
@@ -75,6 +77,16 @@ def build_parser() -> argparse.ArgumentParser:
     release_check_sub = subparsers.add_parser("release-check", help="forgeops release-check")
     release_check_sub.add_argument("--json", action="store_true")
     release_check_sub.add_argument("--repo", default=None)
+
+    checkpoint_sub = subparsers.add_parser("checkpoint", help="forgeops checkpoint")
+    checkpoint_sub.add_argument("--json", action="store_true")
+    checkpoint_sub.add_argument("--repo", default=None)
+    checkpoint_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be written, write nothing")
+
+    handoff_sub = subparsers.add_parser("handoff", help="forgeops handoff")
+    handoff_sub.add_argument("--json", action="store_true")
+    handoff_sub.add_argument("--repo", default=None)
+    handoff_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be written, write nothing")
 
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
@@ -131,6 +143,10 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
         return test_cmd.run_test_targeted(args.repo, plan_only=args.plan, dry_run=args.dry_run)
     if args.command == "release-check":
         return release_check_cmd.run_release_check(args.repo)
+    if args.command == "checkpoint":
+        return checkpoint_cmd.run_checkpoint(args.repo, dry_run=args.dry_run)
+    if args.command == "handoff":
+        return handoff_cmd.run_handoff(args.repo, dry_run=args.dry_run)
     # Resolved via getattr on the module, not a pre-bound reference, so
     # that monkeypatching e.g. forgeops.cli.doctor_cmd.run_doctor (the
     # normal way tests substitute behavior) actually takes effect - a
@@ -148,6 +164,10 @@ def _render_result(args: argparse.Namespace, result: CommandResult) -> str:
         return test_cmd.render_human(result)
     if args.command == "release-check":
         return release_check_cmd.render_human(result)
+    if args.command == "checkpoint":
+        return checkpoint_cmd.render_human(result)
+    if args.command == "handoff":
+        return handoff_cmd.render_human(result)
     module = _SIMPLE_MODULES[args.command]
     return module.render_human(result)
 
@@ -164,7 +184,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    dispatchable = args.command in _SIMPLE_MODULES or args.command in ("changed", "test", "release-check")
+    dispatchable = args.command in _SIMPLE_MODULES or args.command in (
+        "changed", "test", "release-check", "checkpoint", "handoff",
+    )
     if not dispatchable:
         print(
             f"forgeops {args.command}: not yet implemented (see docs/cli-architecture.md for current scope). "

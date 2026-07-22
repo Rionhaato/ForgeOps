@@ -1,21 +1,39 @@
 {
   "schema_version": 1,
-  "repository": {
-    "name": "ForgeOps",
-    "root": "C:\\Users\\joshd\\ForgeOps",
-    "reference_repo_readonly": "C:\\Users\\joshd\\TrendForge"
-  },
+  "generated_at": "2026-07-22T16:36:19Z",
   "branch": "feature/phase2b-targeted-testing",
-  "head": "1949145 (parent of current uncommitted Phase 2C work)",
+  "head": "45f52a3d541a7295878adbe3e5ada3e501b04cdd",
   "remote": {
     "configured": false,
+    "names": [],
+    "upstream": null,
     "ahead": null,
     "behind": null
   },
   "changed_files": {
-    "modified": 6,
-    "untracked": 2,
-    "staged": 8
+    "staged": 0,
+    "modified": 12,
+    "untracked": 10
+  },
+  "has_local_changes": true,
+  "detected_stack": [
+    {
+      "technology": "python",
+      "confidence": "high",
+      "ambiguous": false,
+      "evidence_count": 1
+    },
+    {
+      "technology": "pytest",
+      "confidence": "high",
+      "ambiguous": false,
+      "evidence_count": 2
+    }
+  ],
+  "repository": {
+    "name": "ForgeOps",
+    "root": "C:\\Users\\joshd\\ForgeOps",
+    "reference_repo_readonly": "C:\\Users\\joshd\\TrendForge"
   },
   "mission": "Build the ForgeOps 1.0 reusable toolkit (governance, state, testing, hooks, skills, agents) per the operator's mission brief.",
   "completed_work": [
@@ -23,7 +41,8 @@
     "Phase 1: repository structure and root project files - committed c00b66e on feature/phase1-repository-foundation",
     "Phase 2A: forgeops doctor/status/audit, core infra, detectors, security scanning - committed 64d5596 on feature/phase1-repository-foundation (accepted)",
     "Phase 2B: CLAUDE.md, forgeops changed, forgeops test --targeted (planner + executor), top-level CLI exception handling, hardened forgeops:allow-secret marker - committed 1949145 on feature/phase2b-targeted-testing (accepted)",
-    "Phase 2C: forgeops test --full (build_full_test_plan sharing the existing plan/executor model) and forgeops release-check (aggregates doctor/audit/test --full, never reimplements their checks); 300 passing tests, zero regressions - on feature/phase2b-targeted-testing, not yet committed pending explicit authorization"
+    "Phase 2C: forgeops test --full (build_full_test_plan sharing the existing plan/executor model) and forgeops release-check (aggregates doctor/audit/test --full, never reimplements their checks); 300 passing tests, zero regressions - committed 45f52a3 on feature/phase2b-targeted-testing (accepted)",
+    "Phase 2C (checkpoint/handoff): forgeops checkpoint (writes .agent/CURRENT_STATE.json) and forgeops handoff (writes .agent/HANDOFF.md, derived from the same deterministic data) - forgeops/state/atomic_write.py and forgeops/state/checkpoint.py new, forgeops/state/schema.py gained SUPPORTED_SCHEMA_VERSIONS; 379 passing tests (up from 300), zero regressions - on feature/phase2b-targeted-testing, uncommitted pending review (per this checkpoint's explicit instruction not to create a second commit)"
   ],
   "recent_tests": [
     {
@@ -39,6 +58,16 @@
     {
       "command": "forgeops release-check (real execution against ForgeOps itself)",
       "result": "RELEASE READY - 0 blocker(s), 3 warning(s) (exit 1)",
+      "timestamp_local": "2026-07-22"
+    },
+    {
+      "command": "python -m pytest tests -q",
+      "result": "379 passed",
+      "timestamp_local": "2026-07-22"
+    },
+    {
+      "command": "forgeops checkpoint / forgeops handoff (real execution against ForgeOps itself, human + --json + --dry-run)",
+      "result": "SUCCESS (exit 0) for all three modes, both commands",
       "timestamp_local": "2026-07-22"
     }
   ],
@@ -65,15 +94,15 @@
   "pending_approvals": [],
   "background_processes": [],
   "last_checkpoint": {
-    "phase": "Phase 2C - Full Test Suite and Release Check (pending commit authorization)",
+    "phase": "Phase 2C (checkpoint/handoff) - implemented and validated, uncommitted pending review",
     "timestamp_local": "2026-07-22",
     "docs": [
-      "docs/release-check.md",
-      "docs/phase2c-validation.md",
-      "docs/targeted-testing.md (updated)",
+      "docs/checkpoint-and-handoff.md",
       "docs/cli-architecture.md (updated)",
-      "docs/cli-exit-codes.md (updated)"
+      "docs/cli-exit-codes.md (updated)",
+      "README.md (updated)",
+      "CHANGELOG.md (updated)"
     ]
   },
-  "next_action": "Awaiting Joshua's explicit authorization to commit Phase 2C on feature/phase2b-targeted-testing. Do not begin the next checkpoint automatically. Recommended next: forgeops checkpoint/handoff state writers - see docs/phase2c-validation.md 'Exact recommended next scope'."
+  "next_action": "Phase 2C (test --full + release-check) is committed at 45f52a3 on feature/phase2b-targeted-testing. forgeops checkpoint and forgeops handoff are implemented, tested (379 passing), and validated by real invocation against this repo, but deliberately left UNCOMMITTED for review per this checkpoint's explicit instruction (do not create a second commit). Do not commit the checkpoint/handoff work without Joshua's explicit authorization. Once authorized, review `git diff --cached`/`git status --short` for the new files (forgeops/state/atomic_write.py, forgeops/state/checkpoint.py, forgeops/cli/checkpoint.py, forgeops/cli/handoff.py, associated tests and docs) and commit with an appropriate message. Do not begin the next checkpoint (process-list/cleanup/init/agents/worktrees/approvals/MCP/installers/Codex delegation/Rocky integration/business-operation modules) automatically - all were explicitly out of scope for this bounded checkpoint."
 }

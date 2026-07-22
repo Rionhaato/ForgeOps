@@ -19,6 +19,17 @@ REQUIRED_TOP_LEVEL_KEYS = (
     "next_action",
 )
 
+# The single source of truth for which CURRENT_STATE.json document
+# versions this install of forgeops knows how to read/merge. Both the
+# lightweight validator below and `forgeops.state.checkpoint` (the
+# writer) import this rather than each defining their own supported-set,
+# so there is exactly one place to update when the schema evolves.
+SUPPORTED_SCHEMA_VERSIONS = {1}
+
+
+def is_supported_schema_version(version: object) -> bool:
+    return version in SUPPORTED_SCHEMA_VERSIONS
+
 
 @dataclass(frozen=True)
 class StateFileCheck:

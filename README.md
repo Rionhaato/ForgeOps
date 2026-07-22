@@ -19,11 +19,15 @@ detection and targeted test planning/execution (`forgeops changed`,
 `forgeops test --targeted`), a project CLAUDE.md, top-level CLI exception
 handling, and hardening for the secret-scanner's allowlist marker. Phase
 2C added `forgeops test --full` (the complete supported suite, ignoring
-changed files) and `forgeops release-check` (a read-only release-readiness
+changed files), `forgeops release-check` (a read-only release-readiness
 gate aggregating doctor/audit/test --full into one ready/not-ready
-verdict). See `docs/architecture-decision.md` for why this project exists
-and what it deliberately does not build, `docs/cli-architecture.md` for
-how the CLI is put together, and `.agent/HANDOFF.md` for current progress.
+verdict), and `forgeops checkpoint`/`forgeops handoff` (deterministic,
+atomic state writers for `.agent/CURRENT_STATE.json`/`.agent/HANDOFF.md`
+so another Claude Code or Codex session can resume safely). See
+`docs/architecture-decision.md` for why this project exists and what it
+deliberately does not build, `docs/cli-architecture.md` for how the CLI
+is put together, `docs/checkpoint-and-handoff.md` for the two state
+writers, and `.agent/HANDOFF.md` for current progress.
 
 ## CLAUDE.md vs. `.agent/` state files
 
@@ -57,6 +61,8 @@ forgeops changed                   # classified working-tree change report
 forgeops test --targeted             # plan + run tests for what changed
 forgeops test --full                   # run the complete supported suite(s)
 forgeops release-check                   # read-only release-readiness gate
+forgeops checkpoint                        # write .agent/CURRENT_STATE.json
+forgeops handoff                             # write .agent/HANDOFF.md (derived from checkpoint data)
 
 forgeops <command> --json        # structured JSON instead of human-readable text
 forgeops <command> --repo <path> # inspect a repository other than the current directory
@@ -65,13 +71,14 @@ python -m forgeops <command>     # equivalent to the forgeops console script
 forgeops test --targeted --plan     # show the plan, run nothing
 forgeops test --targeted --dry-run  # show exactly what would execute, run nothing
 forgeops test --full --plan            # same, for the complete suite instead of changed files
+forgeops checkpoint --dry-run             # preview the state document, write nothing
+forgeops handoff --dry-run                  # preview the handoff markdown, write nothing
 ```
 
-Every other command named in the long-term design (`init`, `checkpoint`,
-`handoff`, `process-list`, `cleanup`, `worktree`, `agents`, `approvals`,
-`validate-config`, `install`, `uninstall`) is registered but not yet
-implemented — see `docs/phase2c-validation.md` for the exact recommended
-next scope.
+Every other command named in the long-term design (`init`, `process-list`,
+`cleanup`, `worktree`, `agents`, `approvals`, `validate-config`, `install`,
+`uninstall`) is registered but not yet implemented — see
+`docs/phase2c-validation.md` for prior recommended-next-scope notes.
 
 ## Layout
 

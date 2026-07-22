@@ -12,6 +12,11 @@ DEFAULTS: dict[str, Any] = {
     "log_dir": "logs",
     "oversized_file_bytes": 5 * 1024 * 1024,
     "secret_scan_max_file_bytes": 2 * 1024 * 1024,
+    # Extra glob patterns (relative to repo root, fnmatch syntax) where the
+    # forgeops:allow-secret marker is honored, beyond the built-in
+    # tests/fixtures/examples zones in forgeops/security/secret_scan.py.
+    # Never a wildcard covering application source by default.
+    "allow_secret_paths": [],
 }
 
 
@@ -47,6 +52,8 @@ def load_config(repo_root: Path) -> dict[str, Any]:
                 f"[tool.forgeops].{key} must be a {type(DEFAULTS[key]).__name__}, "
                 f"got {type(value).__name__}"
             )
+        if key == "allow_secret_paths" and not all(isinstance(item, str) for item in value):
+            raise ConfigError("[tool.forgeops].allow_secret_paths must be a list of strings")
         config[key] = value
 
     return config

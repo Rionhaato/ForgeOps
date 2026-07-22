@@ -88,3 +88,52 @@ finding elsewhere in the same file. Documented in
 `docs/audit-security-model.md` as part of the audit's security contract,
 not hidden as an implementation detail, since anyone auditing a project
 that adopts ForgeOps needs to know this opt-out exists.
+
+## 2026-07-22 — `forgeops:allow-secret` hardened to be path-scoped, not global
+
+The Phase 2A marker (previous entry) suppressed scanning for *any* line
+containing it, anywhere in the repo - a genuine gap: production source
+code could self-declare an exemption for a real leaked credential. The
+Phase 2B mission explicitly required closing this. Redesigned so the
+marker only applies inside approved zones (`tests/`, `fixtures/`,
+`examples/`, common test-naming conventions, plus a project-configurable
+`allow_secret_paths` list) - outside those zones the marker is inert, and
+`.env`/database/browser-state files can never be exempted regardless,
+via an independent categorical-exclusion check inside `secret_scan.py`
+itself (not just relying on the caller's file classification). Every
+granted exemption is now returned and surfaced as a visible
+`informational` audit finding rather than silently vanishing. Full
+design and adversarial tests: `docs/audit-security-model.md`,
+`tests/unit/test_secret_scan.py`.
+
+## 2026-07-22 — Dispatch by fresh attribute lookup, not a dict of bound references
+
+While writing Phase 2B's exception-handling tests, `monkeypatch.setattr("forgeops.cli.doctor.run_doctor",
+fake)` had no effect on `forgeops.cli.main()`'s behavior - `main()`'s
+command dispatch was a module-level dict (`_SIMPLE_DISPATCH`) built once
+at import time, holding the original `doctor_cmd.run_doctor` function
+object directly. Patching the module attribute afterward doesn't change
+what the dict already captured. Fixed by resolving `getattr(module,
+f"run_{command}")` fresh on every call in `forgeops/cli/__init__.py`.
+Lesson for future CLI dispatch code in this project: prefer resolving
+callables by attribute lookup at call time over caching them in a
+module-level structure, specifically because it keeps the dispatch
+naturally testable via monkeypatch without special-casing.
+
+## 2026-07-22 — Real execution and disposable multi-stack repos remain mandatory, not just dogfooding-on-ForgeOps-itself
+
+Phase 2B's targeted-test planner and executor passed 250 unit/integration
+tests before a single real disposable-repo validation run. That run
+still found two defects unit tests couldn't have caught: `git status
+--find-copies` isn't a real flag (git status has no copy-detection option
+at all) and was silently making changed-file detection report zero
+changes on a visibly dirty repo; and `npm`/`.cmd`-shim executables are
+unreachable via `subprocess.run([...], shell=False)` on Windows without
+an explicit `shutil.which()` resolution step, invisible to any test using
+`sys.executable` (always a real `.exe`). Extends the Phase 2A lesson
+above: dogfooding against ForgeOps's own repo is necessary but not
+sufficient - a repo shaped like a real, unfamiliar project (here: a
+disposable mixed React+FastAPI example) and a real subprocess execution
+against a real tool (here: `npm`) are what surfaced these two. Both fixes
+shipped with permanent regression tests. Full account:
+`docs/phase2b-validation.md`.

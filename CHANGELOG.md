@@ -6,6 +6,34 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Phase 2B — Targeted Testing and Claude Project Memory
+- Added a concise root `CLAUDE.md` (123 lines, 12 required sections),
+  guarded by automated tests for required sections, size limit, source-of-
+  truth pointers, and absence of secret patterns.
+- Implemented `forgeops changed` (classified working-tree change report:
+  staged/unstaged/untracked/conflicted, renames, project-area and
+  technology classification, broad-impact flagging) and
+  `forgeops test --targeted` (deterministic test planning + execution,
+  `--plan`/`--dry-run` modes, sequential bounded-timeout execution,
+  sanitized logs).
+- Added top-level CLI exception handling: an unexpected internal error
+  now returns exit code 6 (`INTERNAL_ERROR`) with a redacted message and
+  diagnostic log instead of a raw traceback, with a `--debug`/
+  `FORGEOPS_DEBUG` opt-in for local debugging.
+- Hardened the `forgeops:allow-secret` marker: it now only suppresses a
+  finding inside approved test/fixture zones (never production source),
+  can never apply to `.env`/database/browser-state files regardless, and
+  every granted exemption is now a visible, auditable finding instead of
+  a silent skip.
+- 250 passing tests (169 unit, 81 integration), up from Phase 2A's 146.
+  Five real defects found and fixed via dogfooding/real execution during
+  this phase (an invalid `git status` flag silently masking all changed-
+  file detection, untracked-directory collapsing, path-quoting with
+  spaces, a test-plan coverage gap, and a Windows `npm`/`.cmd`-shim
+  subprocess bug) - full account in `docs/phase2b-validation.md`.
+- 3 new docs (`docs/targeted-testing.md`, `docs/phase2b-validation.md`)
+  plus updates to `docs/cli-architecture.md` and `docs/audit-security-model.md`.
+
 ### Phase 2A — Safe Deterministic CLI Foundation
 - Implemented `forgeops doctor`, `forgeops status`, `forgeops audit` -
   read-only, working via both the `forgeops` console script and

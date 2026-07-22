@@ -5,28 +5,34 @@
     "root": "C:\\Users\\joshd\\ForgeOps",
     "reference_repo_readonly": "C:\\Users\\joshd\\TrendForge"
   },
-  "branch": "feature/phase1-repository-foundation",
-  "head": "c00b66e (parent of current uncommitted Phase 2A work)",
+  "branch": "feature/phase2b-targeted-testing",
+  "head": "64d5596 (feature/phase1-repository-foundation, parent of current uncommitted Phase 2B work)",
   "remote": {
     "configured": false,
     "ahead": null,
     "behind": null
   },
   "changed_files": {
-    "modified": 6,
-    "untracked": 0,
-    "staged": 47
+    "modified": 9,
+    "untracked": 13,
+    "staged": 0
   },
   "mission": "Build the ForgeOps 1.0 reusable toolkit (governance, state, testing, hooks, skills, agents) per the operator's mission brief.",
   "completed_work": [
-    "Phase 0: source audit of TrendForge reusable material (docs/source-audit.md, docs/reusable-components.md, docs/known-failures.md, docs/security-boundaries.md, docs/architecture-decision.md) - committed 662c101 on master",
-    "Phase 1: repository structure (forgeops/ 12 subpackages, shared/, claude-plugin/, codex-plugin/, installers/, examples/, tests/, logs/) plus root README/LICENSE/CHANGELOG/pyproject.toml/.gitignore - committed c00b66e on feature/phase1-repository-foundation",
-    "Phase 2A: working CLI foundation (forgeops doctor/status/audit), core infra (paths, git, config, result, exit_codes, subprocess_utils, timestamps), detectors (tree_scan, stack), security (redact, secret_scan, dangerous_files), state schema check, log persistence with redaction; 146 passing tests; 5 new docs plus this checkpoint - not yet committed"
+    "Phase 0: source audit of TrendForge reusable material - committed 662c101 on master",
+    "Phase 1: repository structure and root project files - committed c00b66e on feature/phase1-repository-foundation",
+    "Phase 2A: forgeops doctor/status/audit, core infra, detectors, security scanning - committed 64d5596 on feature/phase1-repository-foundation (accepted)",
+    "Phase 2B: CLAUDE.md, forgeops changed, forgeops test --targeted (planner + executor), top-level CLI exception handling, hardened forgeops:allow-secret marker; 250 passing tests; 5 real bugs found and fixed via dogfooding/real execution - on feature/phase2b-targeted-testing, not yet committed"
   ],
   "recent_tests": [
     {
       "command": "python -m pytest tests -q",
-      "result": "146 passed",
+      "result": "250 passed",
+      "timestamp_local": "2026-07-22"
+    },
+    {
+      "command": "forgeops test --targeted (real execution against ForgeOps itself)",
+      "result": "1 command run, 1 succeeded (248 pytest tests passed for real via subprocess)",
       "timestamp_local": "2026-07-22"
     }
   ],
@@ -35,6 +41,11 @@
       "description": "claude/codex CLI executables not found on PATH",
       "severity": "low",
       "affects": "Phase 8 real-executable testing only; adapter can be built and tested against a mock"
+    },
+    {
+      "description": "No Node project with installed test dependencies exists anywhere in scope (ForgeOps has no Node code; TrendForge is read-only)",
+      "severity": "low",
+      "affects": "A real *passing* Node targeted-test execution could not be exercised this phase without installing dependencies (out of bounds); a real *failing* run was exercised end-to-end instead"
     }
   ],
   "active_agents": [],
@@ -43,15 +54,14 @@
   "pending_approvals": [],
   "background_processes": [],
   "last_checkpoint": {
-    "phase": "Phase 2A - Safe Deterministic CLI Foundation (pending commit)",
+    "phase": "Phase 2B - Targeted Testing and Claude Project Memory (pending commit)",
     "timestamp_local": "2026-07-22",
     "docs": [
-      "docs/phase2a-porting-notes.md",
-      "docs/cli-architecture.md",
-      "docs/cli-exit-codes.md",
-      "docs/audit-security-model.md",
-      "docs/phase2a-validation.md"
+      "docs/targeted-testing.md",
+      "docs/phase2b-validation.md",
+      "docs/cli-architecture.md (updated)",
+      "docs/audit-security-model.md (updated)"
     ]
   },
-  "next_action": "Commit Phase 2A on feature/phase1-repository-foundation, then begin Phase 2B: forgeops changed + forgeops test --targeted first (see docs/phase2a-validation.md 'Exact recommended Phase 2B scope')."
+  "next_action": "Commit Phase 2B on feature/phase2b-targeted-testing, then stop for review (Phase 2C not to begin automatically). Recommended Phase 2C opener: forgeops release-check - see docs/phase2b-validation.md 'Exact recommended Phase 2C scope'."
 }

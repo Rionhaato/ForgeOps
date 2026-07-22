@@ -1,20 +1,41 @@
-"""Command-line entry points. Phase 2A implements doctor/status/audit;
-every other command named in the mission brief is intentionally not
-registered yet and prints a clear "not implemented" message rather than
-being silently absent - see docs/cli-architecture.md."""
+"""Command-line entry points. Phase 2A implemented doctor/status/audit;
+Phase 2B adds changed/test --targeted. Every other command named in the
+mission brief is intentionally not registered yet and prints a clear
+"not implemented" message rather than being silently absent - see
+docs/cli-architecture.md.
+
+Top-level exception handling (Phase 2B, Part 5): run_fn()/render_fn()
+calls are wrapped in a single boundary here. Expected user/configuration
+errors (missing repo, invalid config, missing git) are already caught
+*inside* each run_* function and returned as a normal CommandResult with
+the correct exit code - they never reach this boundary. Only a genuinely
+unexpected exception (a real bug) is caught here, converted to exit code
+6 (INTERNAL_ERROR) with a redacted message and diagnostic log, unless
+--debug or FORGEOPS_DEBUG is set, in which case the raw traceback is
+allowed through for local debugging."""
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+import traceback
+from pathlib import Path
 
 from forgeops.cli import audit as audit_cmd
+from forgeops.cli import changed as changed_cmd
 from forgeops.cli import doctor as doctor_cmd
 from forgeops.cli import status as status_cmd
+from forgeops.cli import test as test_cmd
+from forgeops.core import exit_codes
+from forgeops.core.paths import find_repo_root
 from forgeops.core.result import CommandResult
+from forgeops.core.timestamps import path_timestamp
+from forgeops.security.redact import redact_text
 
 PHASE_2A_COMMANDS = ("doctor", "status", "audit")
 NOT_YET_IMPLEMENTED_COMMANDS = (
-    "init", "checkpoint", "handoff", "changed", "test", "release-check",
+    "init", "checkpoint", "handoff", "release-check",
     "process-list", "cleanup", "worktree", "agents", "approvals",
     "validate-config", "install", "uninstall",
 )
@@ -22,12 +43,31 @@ NOT_YET_IMPLEMENTED_COMMANDS = (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="forgeops", description="ForgeOps: deterministic project-state and safety toolkit.")
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="show a raw traceback on an unexpected internal error instead of a sanitized summary "
+             "(equivalent to setting FORGEOPS_DEBUG=1)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for name in PHASE_2A_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name}")
         sub.add_argument("--json", action="store_true", help="emit structured JSON instead of human-readable text")
         sub.add_argument("--repo", default=None, help="path to the repository to inspect (default: discover from the current directory)")
+
+    changed_sub = subparsers.add_parser("changed", help="forgeops changed")
+    changed_sub.add_argument("--json", action="store_true")
+    changed_sub.add_argument("--repo", default=None)
+    changed_sub.add_argument("--staged", action="store_true", help="show only staged files")
+    changed_sub.add_argument("--unstaged", action="store_true", help="show only unstaged tracked files")
+    changed_sub.add_argument("--untracked", action="store_true", help="show only untracked files")
+
+    test_sub = subparsers.add_parser("test", help="forgeops test --targeted")
+    test_sub.add_argument("--json", action="store_true")
+    test_sub.add_argument("--repo", default=None)
+    test_sub.add_argument("--targeted", action="store_true", help="required in Phase 2B - only targeted mode is implemented")
+    test_sub.add_argument("--plan", action="store_true", help="show the plan, execute nothing")
+    test_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show exactly what would run, execute nothing")
 
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
@@ -37,32 +77,122 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-_DISPATCH = {
-    "doctor": (doctor_cmd.run_doctor, doctor_cmd.render_human),
-    "status": (status_cmd.run_status, status_cmd.render_human),
-    "audit": (audit_cmd.run_audit, audit_cmd.render_human),
+_SIMPLE_MODULES = {
+    "doctor": doctor_cmd,
+    "status": status_cmd,
+    "audit": audit_cmd,
 }
+
+
+def _debug_enabled(args: argparse.Namespace) -> bool:
+    if getattr(args, "debug", False):
+        return True
+    return os.environ.get("FORGEOPS_DEBUG", "").strip().lower() not in ("", "0", "false")
+
+
+def _best_effort_repo_root(repo_arg: str | None) -> Path | None:
+    try:
+        start = Path(repo_arg) if repo_arg else Path.cwd()
+        return find_repo_root(start)
+    except OSError:
+        return None
+
+
+def _write_diagnostic_log(repo_root: Path | None, command: str, exc: BaseException) -> str | None:
+    if repo_root is None:
+        return None
+    try:
+        tb_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        redacted = redact_text(tb_text)
+        log_dir = repo_root / "logs" / command / path_timestamp()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = log_dir / "internal_error.log"
+        path.write_text(redacted, encoding="utf-8")
+        return str(path)
+    except OSError:
+        return None
+
+
+def _run_command(args: argparse.Namespace) -> CommandResult:
+    if args.command == "changed":
+        return changed_cmd.run_changed(
+            args.repo, staged=args.staged, unstaged=args.unstaged, untracked=args.untracked,
+        )
+    if args.command == "test":
+        return test_cmd.run_test_targeted(args.repo, plan_only=args.plan, dry_run=args.dry_run)
+    # Resolved via getattr on the module, not a pre-bound reference, so
+    # that monkeypatching e.g. forgeops.cli.doctor_cmd.run_doctor (the
+    # normal way tests substitute behavior) actually takes effect - a
+    # dict built once at import time with direct function references
+    # would silently keep using the original, unpatched function.
+    module = _SIMPLE_MODULES[args.command]
+    run_fn = getattr(module, f"run_{args.command}")
+    return run_fn(args.repo)
+
+
+def _render_result(args: argparse.Namespace, result: CommandResult) -> str:
+    if args.command == "changed":
+        return changed_cmd.render_human(result)
+    if args.command == "test":
+        return test_cmd.render_human(result)
+    module = _SIMPLE_MODULES[args.command]
+    return module.render_human(result)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command not in _DISPATCH:
+    if args.command == "test" and not args.targeted:
         print(
-            f"forgeops {args.command}: not yet implemented (see docs/cli-architecture.md for the Phase 2A scope). "
+            "forgeops test: only --targeted mode is implemented in Phase 2B "
+            "(release-check / --full is future work). See docs/targeted-testing.md.",
+            file=sys.stderr,
+        )
+        return 1
+
+    dispatchable = args.command in _SIMPLE_MODULES or args.command in ("changed", "test")
+    if not dispatchable:
+        print(
+            f"forgeops {args.command}: not yet implemented (see docs/cli-architecture.md for current scope). "
             "See .agent/HANDOFF.md for current progress.",
             file=sys.stderr,
         )
         return 1
 
-    run_fn, render_fn = _DISPATCH[args.command]
-    result: CommandResult = run_fn(args.repo)
+    debug = _debug_enabled(args)
+
+    try:
+        result = _run_command(args)
+        rendered = _render_result(args, result)
+    except Exception as exc:  # noqa: BLE001 - deliberate top-level boundary; see module docstring
+        if debug:
+            raise
+        repo_root = _best_effort_repo_root(args.repo)
+        log_path = _write_diagnostic_log(repo_root, args.command, exc)
+        message = redact_text(f"forgeops {args.command}: internal error ({type(exc).__name__}: {exc})")
+        if args.json:
+            payload = {
+                "command": args.command,
+                "exit_code": exit_codes.INTERNAL_ERROR,
+                "error": type(exc).__name__,
+                "message": message,
+                "diagnostic_log": log_path,
+            }
+            print(json.dumps(payload, indent=2))
+        else:
+            print(message, file=sys.stderr)
+            print(
+                f"diagnostic log: {log_path}" if log_path else "(no repository context available - diagnostic log not written)",
+                file=sys.stderr,
+            )
+            print("re-run with --debug (or FORGEOPS_DEBUG=1) for a full traceback", file=sys.stderr)
+        return exit_codes.INTERNAL_ERROR
 
     if args.json:
         print(result.to_json())
     else:
-        print(render_fn(result))
+        print(rendered)
 
     return result.exit_code
 

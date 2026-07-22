@@ -134,6 +134,61 @@ def get_status(repo_root: Path) -> StatusSummary:
     return StatusSummary(staged=staged, modified=modified, untracked=untracked)
 
 
+@dataclass(frozen=True)
+class StatusEntry:
+    index_state: str  # raw X code (staged/index side)
+    worktree_state: str  # raw Y code (unstaged/worktree side)
+    path: str
+    old_path: str | None  # populated for renames/copies
+
+
+def get_status_entries(repo_root: Path) -> list[StatusEntry]:
+    """Richer status parse than get_status(): preserves rename old paths,
+    the raw XY codes, and reports individual files inside a brand-new
+    untracked directory rather than collapsing it to one entry (that
+    collapsing behavior is intentionally kept for get_ignored_summary(),
+    where it's a performance-motivated summary, not here, where "changed"
+    needs precise per-file paths).
+
+    Uses `-z` (NUL-terminated, unquoted output) rather than line-based
+    parsing: git's default porcelain output quotes/escapes paths with
+    spaces or unusual characters (e.g. `"new file.py"`), which a naive
+    line splitter would return verbatim, quotes and all - `-z` avoids
+    that ambiguity entirely and is the documented way to parse `git
+    status` output programmatically. For a rename/copy entry, `-z` emits
+    the new path and then the old path as two separate NUL-terminated
+    fields (no ` -> ` separator to split on).
+
+    `git status` has no copy-detection flag (only `git diff`/`git log`
+    support --find-copies) - ChangedFile.category is therefore never
+    "copied" in practice; this is an inherent git limitation, not a gap
+    in this function - see docs/targeted-testing.md known limitations."""
+    result = _git(repo_root, "status", "--porcelain=v1", "--find-renames", "--untracked-files=all", "-z")
+    entries: list[StatusEntry] = []
+    if result.returncode != 0:
+        return entries
+
+    fields = result.stdout.split("\0")
+    if fields and fields[-1] == "":
+        fields = fields[:-1]
+
+    i = 0
+    while i < len(fields):
+        chunk = fields[i]
+        i += 1
+        if len(chunk) < 3:
+            continue
+        index_state, worktree_state = chunk[0], chunk[1]
+        path = chunk[3:]
+        old_path: str | None = None
+        if index_state in ("R", "C") or worktree_state in ("R", "C"):
+            if i < len(fields):
+                old_path = fields[i]
+                i += 1
+        entries.append(StatusEntry(index_state=index_state, worktree_state=worktree_state, path=path, old_path=old_path))
+    return entries
+
+
 def get_ignored_summary(repo_root: Path, limit: int = 50) -> list[str]:
     """Top-level ignored paths only (git collapses ignored directories to
     one entry by default) - a summary, not an exhaustive expansion, so

@@ -62,17 +62,59 @@ but a description that never captures it in the first place. Verified by
 `test_scan_text_never_includes_matched_value` and
 `test_audit_never_prints_the_secret_value`.
 
-### The `forgeops:allow-secret` inline marker
+### The `forgeops:allow-secret` inline marker (hardened in Phase 2B)
 
 A line containing the literal substring `forgeops:allow-secret` is
-skipped entirely by the scanner. Exists because test fixtures
-legitimately need to contain fake, secret-shaped strings to test the
-scanner itself — see `docs/phase2a-porting-notes.md` for how this was
-discovered (dogfooding `forgeops audit` against its own repo initially
-flagged its own test suite). This is a narrow, explicit opt-out a human
-author writes deliberately on a specific line — not a directory-level or
-file-level exclusion, so it can't accidentally suppress a real finding
-elsewhere in the same file.
+exempted from a finding **only when the file's path also falls inside an
+approved fixture/test zone**. Exists because test fixtures legitimately
+need to contain fake, secret-shaped strings to test the scanner itself —
+see `docs/phase2a-porting-notes.md` for how this was discovered
+(dogfooding `forgeops audit` against its own repo initially flagged its
+own test suite).
+
+**Phase 2A shipped this as a global, path-blind opt-out — any line,
+anywhere, containing the marker was suppressed.** That is a real gap: a
+production source file could self-declare an exemption for a genuine
+leaked credential. Phase 2B closed it. The policy now:
+
+- **Approved zones** (`forgeops/security/secret_scan.py:DEFAULT_ALLOWLIST_PATH_PATTERNS`):
+  `tests/`, `test/`, any `fixtures/`/`fixture/` directory, `examples/`,
+  and files matching common test-naming conventions
+  (`test_*.py`/`*_test.py`/`*.test.js`/`*.spec.ts`/etc.) regardless of
+  directory. A project can add more via `[tool.forgeops].allow_secret_paths`
+  in `pyproject.toml` (a list of fnmatch-style globs) — there is no way to
+  add `**` or an unbounded application-source pattern by accident; it's an
+  explicit, reviewable config list.
+- **Outside those zones the marker is inert.** A line in
+  `backend/config.py` containing the marker is scanned exactly as if the
+  marker weren't there — proven adversarially in
+  `test_allowlist_marker_does_not_suppress_in_production_source_path` and
+  `test_allowlist_marker_does_not_suppress_credential_bearing_url_in_production_source`
+  (`tests/unit/test_secret_scan.py`).
+- **`.env*`, database files, and browser/session-state files can never be
+  exempted, marker or not — because they are never opened at all**,
+  independent of the marker check entirely.
+  `forgeops/security/secret_scan.py:_is_categorically_excluded` enforces
+  this as a *second*, independent layer inside `secret_scan.py` itself
+  (reusing `tree_scan.py`'s own env/db/browser-state detection), not
+  relying solely on the caller (the tree walk) doing the right thing —
+  so even a hypothetical future caller that scans a path directly still
+  can't have these categories read. Proven adversarially:
+  `test_env_file_never_scanned_regardless_of_marker`,
+  `test_browser_state_file_never_scanned_regardless_of_marker`,
+  `test_database_file_never_scanned_regardless_of_marker`.
+- **Every granted exemption is visible, not silently absorbed.**
+  `scan_text`/`scan_file` return `(findings, exemptions)` — never a single
+  list a caller could mistake for "nothing happened." `forgeops audit`
+  reports each exemption as its own `informational` check
+  (`secret-scan-exemption`) with category, file, and line — the matched
+  value is never included, exactly like a real finding. See
+  `docs/phase2b-validation.md` for a real dogfooded example.
+
+This is a narrow, explicit, auditable opt-out a human author writes
+deliberately on a specific line inside a specific, approved directory —
+not a directory-level or file-level blanket exclusion, and never a
+production-source bypass.
 
 ## Known limitations
 

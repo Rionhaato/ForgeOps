@@ -4,12 +4,31 @@ Hard rule, stricter than the original: the matched substring is never
 returned, stored, or printed anywhere - only a category label, file, and
 line number. Callers are responsible for not passing this module the
 contents of files already classified as credential-bearing by category
-(.env*, browser storage-state, etc.) - see forgeops/detectors/sensitive.py."""
+(.env*, browser storage-state, etc.) - see forgeops/detectors/tree_scan.py.
+This module additionally refuses to open a categorically credential-
+bearing path itself (see _is_categorically_excluded), as a second,
+independent layer rather than relying solely on callers doing the right
+thing.
+
+## The forgeops:allow-secret marker (see docs/audit-security-model.md)
+
+A line containing the literal substring `forgeops:allow-secret` is only
+exempted from a finding when the file's path also matches an approved
+fixture/test zone (tests/, fixtures/, examples/, common test-naming
+conventions, or an explicitly configured `allow_secret_paths` entry).
+Outside those zones the marker is inert: the line is scanned normally,
+so normal application source cannot self-declare an exemption. Every
+exemption that *is* granted is still recorded (as a SecretExemption,
+category/file/line only - never the matched value) so it shows up in
+audit output as an informational finding rather than vanishing silently."""
 from __future__ import annotations
 
+import fnmatch
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from forgeops.detectors.tree_scan import BROWSER_STATE_NAME_HINTS, DB_SUFFIXES, ENV_FILE_RE, ENV_SAFE_RE
 
 PATTERNS: dict[str, re.Pattern[str]] = {
     "aws_access_key_id": re.compile(r"AKIA[0-9A-Z]{16}"),
@@ -48,6 +67,21 @@ BINARY_SUFFIXES = {
     ".sqlite3", ".pdf", ".zip", ".exe", ".dll", ".so", ".dylib",
 }
 
+# Default zones where the allow-secret marker is honored. Deliberately
+# narrow: test directories, fixture directories, example directories, and
+# common test-file naming conventions - never a wildcard, never "anything
+# under src/". Projects can add more via config's allow_secret_paths.
+DEFAULT_ALLOWLIST_PATH_PATTERNS: tuple[str, ...] = (
+    "tests/*", "tests/**", "test/*", "test/**",
+    "*/tests/*", "*/tests/**", "*/test/*", "*/test/**",
+    "**/tests/**", "**/test/**",
+    "**/fixtures/**", "**/fixture/**",
+    "examples/*", "examples/**", "**/examples/**",
+    "**/test_*.py", "**/*_test.py",
+    "**/*.test.js", "**/*.test.ts", "**/*.test.jsx", "**/*.test.tsx",
+    "**/*.spec.js", "**/*.spec.ts", "**/*.spec.jsx", "**/*.spec.tsx",
+)
+
 
 @dataclass(frozen=True)
 class SecretFinding:
@@ -59,43 +93,98 @@ class SecretFinding:
     remediation: str
 
 
+@dataclass(frozen=True)
+class SecretExemption:
+    category: str
+    file: str
+    line: int
+    reason: str
+
+
 ALLOWLIST_MARKER = "forgeops:allow-secret"
 
 
-def scan_text(text: str, relative_path: str) -> list[SecretFinding]:
-    """Scan `text` line by line. A line containing the literal marker
-    `forgeops:allow-secret` is skipped entirely - the intended use is
-    fixture/test files that deliberately contain fake, secret-shaped
-    strings to exercise this scanner itself (this project's own tests do
-    exactly that). The marker is a plain substring check, not a comment
-    syntax, so it works in any file type."""
+def _is_categorically_excluded(relative_path: str) -> bool:
+    """True for paths this module refuses to open at all, regardless of
+    any marker: env files, database files, browser/session state files.
+    This is a second, independent layer of the same rule tree_scan.py
+    already enforces by never adding these paths to scannable_text_files -
+    belt and suspenders, so a caller that (by mistake or in the future)
+    passes one of these paths directly still can't have it scanned."""
+    name = relative_path.rsplit("/", 1)[-1]
+    if ENV_SAFE_RE.match(name) or ENV_FILE_RE.match(name):
+        return True
+    suffix = Path(name).suffix.lower()
+    if suffix in DB_SUFFIXES:
+        return True
+    if any(hint in relative_path.lower() for hint in BROWSER_STATE_NAME_HINTS):
+        return True
+    return False
+
+
+def _path_is_exemption_eligible(relative_path: str, extra_allow_patterns: tuple[str, ...]) -> bool:
+    normalized = relative_path.replace("\\", "/")
+    for pattern in (*DEFAULT_ALLOWLIST_PATH_PATTERNS, *extra_allow_patterns):
+        if fnmatch.fnmatch(normalized, pattern):
+            return True
+    return False
+
+
+def scan_text(
+    text: str,
+    relative_path: str,
+    extra_allow_patterns: tuple[str, ...] = (),
+) -> tuple[list[SecretFinding], list[SecretExemption]]:
+    """Scan `text` line by line. Returns (findings, exemptions) - never a
+    single flat list - so a caller can never accidentally treat a granted
+    exemption as if nothing happened; exemptions must be surfaced too."""
     findings: list[SecretFinding] = []
+    exemptions: list[SecretExemption] = []
+    eligible = _path_is_exemption_eligible(relative_path, extra_allow_patterns)
+
     for lineno, line in enumerate(text.splitlines(), start=1):
-        if ALLOWLIST_MARKER in line:
-            continue
+        marker_present = ALLOWLIST_MARKER in line
         for category, pattern in PATTERNS.items():
-            if pattern.search(line):
-                findings.append(
-                    SecretFinding(
+            if not pattern.search(line):
+                continue
+            if marker_present and eligible:
+                exemptions.append(
+                    SecretExemption(
                         category=category,
                         file=relative_path,
                         line=lineno,
-                        redacted_match=f"<{category} pattern matched, value redacted>",
-                        severity=SEVERITY[category],
-                        remediation=REMEDIATION[category],
+                        reason=f"{ALLOWLIST_MARKER} marker in an approved fixture/test path",
                     )
                 )
-    return findings
+                continue
+            findings.append(
+                SecretFinding(
+                    category=category,
+                    file=relative_path,
+                    line=lineno,
+                    redacted_match=f"<{category} pattern matched, value redacted>",
+                    severity=SEVERITY[category],
+                    remediation=REMEDIATION[category],
+                )
+            )
+    return findings, exemptions
 
 
-def scan_file(repo_root: Path, relative_path: str, max_bytes: int) -> list[SecretFinding]:
+def scan_file(
+    repo_root: Path,
+    relative_path: str,
+    max_bytes: int,
+    extra_allow_patterns: tuple[str, ...] = (),
+) -> tuple[list[SecretFinding], list[SecretExemption]]:
+    if _is_categorically_excluded(relative_path):
+        return [], []
     path = repo_root / relative_path
     if path.suffix.lower() in BINARY_SUFFIXES or not path.is_file():
-        return []
+        return [], []
     try:
         if path.stat().st_size > max_bytes:
-            return []
+            return [], []
         text = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
-        return []
-    return scan_text(text, relative_path)
+        return [], []
+    return scan_text(text, relative_path, extra_allow_patterns)

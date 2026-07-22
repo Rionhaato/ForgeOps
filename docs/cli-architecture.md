@@ -1,4 +1,4 @@
-# CLI Architecture (Phase 2A)
+# CLI Architecture (Phase 2A + 2B)
 
 ## Module layout
 
@@ -6,40 +6,61 @@
 forgeops/
   __main__.py          python -m forgeops entry point
   cli/
-    __init__.py         argparse setup, subcommand registration, main()
+    __init__.py         argparse setup, subcommand registration, main(), top-level exception boundary
     render.py            shared human-readable rendering primitives
     doctor.py             forgeops doctor
     status.py             forgeops status
     audit.py               forgeops audit
+    changed.py              forgeops changed
+    test.py                  forgeops test --targeted
   core/
     paths.py             repo-root discovery, path normalization
-    git.py                read-only git-state inspection
+    git.py                read-only git-state inspection (status entries, renames, ahead/behind, ...)
     config.py             [tool.forgeops] loading (pyproject.toml)
     result.py             Check / CommandResult structured model
     exit_codes.py         shared exit-code constants
-    subprocess_utils.py   safe subprocess execution
+    subprocess_utils.py   safe subprocess execution (incl. Windows .cmd-shim resolution)
     timestamps.py         deterministic, injectable-clock timestamps
   detectors/
     tree_scan.py          single bounded filesystem walk -> TreeScan
     stack.py               stack detection from tree_scan evidence
+    changed.py              changed-file classification (area/technology/broad-impact)
   security/
     redact.py              text redaction (used for raw log persistence)
-    secret_scan.py          secret-pattern scanning, redacted findings
+    secret_scan.py          secret-pattern scanning, redacted findings, scoped allow-secret marker
     dangerous_files.py      dangerous-filename pattern matching
   state/
     schema.py              lightweight .agent/CURRENT_STATE.json validation
   reporting/
     logs.py                 logs/<command>/<timestamp>/ persistence
+  testing/
+    planner.py              deterministic targeted-test plan construction
+    executor.py              sequential, bounded-timeout test-plan execution
 ```
 
-Every command module (`doctor.py`/`status.py`/`audit.py`) exposes two
-functions: `run_<command>(repo_arg, cwd=None, clock=None, write_log=True)
--> CommandResult` and `render_human(result) -> str`. `run_*` never touches
-`sys.argv`, `print`, or `sys.exit` — it's a pure function over its
-arguments, which is what makes it directly unit-testable (see
-`tests/integration/test_cli_*.py`) without spawning a subprocess. `main()`
-in `forgeops/cli/__init__.py` is the only place that parses `sys.argv`,
-calls `print`, and returns an exit code.
+Every command module (`doctor.py`/`status.py`/`audit.py`/`changed.py`)
+exposes two functions: `run_<command>(repo_arg, cwd=None, clock=None,
+write_log=True, ...) -> CommandResult` and `render_human(result) -> str`.
+`test.py` follows the same shape (`run_test_targeted`, `render_human`)
+plus `plan_only`/`dry_run` flags. `run_*` never touches `sys.argv`,
+`print`, or `sys.exit` — it's a pure function over its arguments, which is
+what makes it directly unit-testable (see `tests/integration/test_cli_*.py`)
+without spawning a subprocess. `main()` in `forgeops/cli/__init__.py` is
+the only place that parses `sys.argv`, calls `print`, and returns an exit
+code - and, as of Phase 2B, the only place that catches an unexpected
+exception (see "Top-level exception handling" below).
+
+`main()` dispatches to `run_*`/`render_human` via `getattr(module,
+"run_<command>")` at call time, not a dict of pre-bound function
+references built once at import time. This matters for testability: a
+dict literal like `{"doctor": doctor_cmd.run_doctor}` captures the
+function object doctor_cmd.run_doctor pointed to *at import time* -
+`monkeypatch.setattr("forgeops.cli.doctor.run_doctor", fake)` in a test
+then has no effect, because the dict still holds the original reference.
+`getattr(doctor_cmd, "run_doctor")` performed fresh on every call always
+sees the current attribute, patched or not. This was a real bug caught
+while writing Phase 2B's exception-handling tests - see
+`docs/phase2b-validation.md`.
 
 ## Entry points
 
@@ -121,20 +142,40 @@ from content-reading versus which are scanned.
   command without reaching into `forgeops.core.git` globally and
   affecting other commands' tests.
 
-## Known limitations (Phase 2A)
+## Top-level exception handling (Phase 2B, Part 5)
 
-- No top-level exception handler in `main()` — an unexpected internal
-  error currently produces a Python traceback on stderr rather than a
-  clean `INTERNAL_ERROR` (6) exit. Acceptable for Phase 2A (three
-  well-tested, read-only commands); revisit once mutating commands
-  (Phase 2B) raise the stakes of an uncaught exception mid-operation.
+`main()` wraps the `run_fn(...)` + `render_fn(result)` call pair in a
+single `try/except Exception`. Expected user/configuration errors
+(missing repository, invalid `[tool.forgeops]`, missing git) never reach
+this boundary at all - they're already caught *inside* each `run_*`
+function and returned as a normal `CommandResult` with the correct exit
+code (`REPO_NOT_FOUND`, `INVALID_CONFIG`, `COMMAND_EXECUTION_FAILURE`).
+Only a genuinely unexpected exception (a real bug) is caught here:
+
+- Exit code `INTERNAL_ERROR` (6), always.
+- A concise, redacted message on stderr (human mode) or in a `message`
+  field (`--json` mode) - never a raw traceback by default.
+- A sanitized diagnostic log at `logs/<command>/<timestamp>/internal_error.log`
+  (the full traceback, passed through `forgeops.security.redact.redact_text`
+  before being written) when a repository root can be determined at all;
+  if not (e.g. `--repo` pointed at a path with no `.git`), the message
+  says so explicitly rather than silently skipping.
+- `--debug` (a flag on the top-level parser, so it must precede the
+  subcommand: `forgeops --debug doctor`) or the `FORGEOPS_DEBUG`
+  environment variable (any value other than empty/`0`/`false`) re-raises
+  the real exception instead, for local debugging.
+
+## Known limitations
+
 - `forgeops audit`'s secret scan is line-based pattern matching, not a
   parser — see `docs/audit-security-model.md` for what this does and
   doesn't catch.
-- `forgeops init`, `checkpoint`, `handoff`, `changed`, `test`,
-  `release-check`, `process-list`, `cleanup`, `worktree`, `agents`,
-  `approvals`, `validate-config`, `install`, `uninstall` are registered in
-  the argument parser (so `forgeops <name> --help` works and produces a
-  clean error) but not implemented — invoking any of them prints "not yet
-  implemented" to stderr and exits 1. See `docs/phase2a-validation.md` for
-  the exact recommended Phase 2B scope.
+- `forgeops init`, `checkpoint`, `handoff`, `release-check`,
+  `process-list`, `cleanup`, `worktree`, `agents`, `approvals`,
+  `validate-config`, `install`, `uninstall` are registered in the
+  argument parser (so `forgeops <name> --help` works and produces a clean
+  error) but not implemented — invoking any of them prints "not yet
+  implemented" to stderr and exits 1. `forgeops test` without `--targeted`
+  behaves the same way (`--full`/release-check-driven testing is future
+  work). See `docs/phase2b-validation.md` for the exact recommended
+  Phase 2C scope.

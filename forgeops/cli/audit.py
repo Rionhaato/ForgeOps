@@ -98,8 +98,14 @@ def run_audit(
 
     # 3. Secret-pattern scan (never scans files already classified as env/db/media/browser-state).
     secret_findings = []
+    secret_exemptions = []
+    extra_allow_patterns = tuple(config.get("allow_secret_paths", []))
     for rel in tree.scannable_text_files:
-        secret_findings.extend(scan_file_for_secrets(repo_root, rel, config["secret_scan_max_file_bytes"]))
+        findings, exemptions = scan_file_for_secrets(
+            repo_root, rel, config["secret_scan_max_file_bytes"], extra_allow_patterns,
+        )
+        secret_findings.extend(findings)
+        secret_exemptions.extend(exemptions)
     if secret_findings:
         for finding in secret_findings[:MAX_SECRET_FINDINGS_LISTED]:
             checks.append(Check(
@@ -118,6 +124,17 @@ def run_audit(
         checks.append(Check(
             "secret-scan", "Secret-pattern scan", "pass",
             f"{len(tree.scannable_text_files)} files scanned, no matches",
+        ))
+
+    # Every honored forgeops:allow-secret exemption is reported explicitly -
+    # never silently absorbed into a clean "no matches" result - so an
+    # audit reader can see exactly where and why scanning was skipped,
+    # without the suppressed value ever appearing anywhere.
+    for exemption in secret_exemptions[:MAX_SECRET_FINDINGS_LISTED]:
+        checks.append(Check(
+            "secret-scan-exemption", f"Exempted match in {exemption.file}:{exemption.line}", "informational",
+            exemption.reason,
+            detail={"category": exemption.category, "file": exemption.file, "line": exemption.line, "reason": exemption.reason},
         ))
 
     def _category(check_id: str, label: str, paths: list[str], status: str) -> None:

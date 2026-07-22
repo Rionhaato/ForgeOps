@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment files — never track real secrets
+.env
+.env.*
+!.env.example
+!*/.env.example
+
+# Node (examples/ and any future JS tooling)
+node_modules/
+dist/
+build/
+
+# Raw command output — logs/ is written to, never committed, except the
+# placeholder that keeps the directory tracked.
+logs/*
+!logs/.gitkeep
+
+# Disposable example/fixture repos are generated at test time, not tracked
+tests/fixtures/generated/
+examples/*/.forgeops-test-run/
+
+# Local machine permission state (mirrors TrendForge's .claude/ convention)
+.claude/settings.local.json
+
+# Isolated worktrees created for parallel work
+.worktrees/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.log
+*.pid

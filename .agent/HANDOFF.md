@@ -2,34 +2,43 @@
 
 ## Status (this session, in progress)
 
-Phase 0 (source audit) complete: `docs/source-audit.md`,
-`docs/reusable-components.md`, `docs/known-failures.md`,
-`docs/security-boundaries.md`, `docs/architecture-decision.md` written
-from a read-only inspection of `C:\Users\joshd\TrendForge`. No TrendForge
-file was modified. No secret values were read, copied, or printed at any
-point — sensitive paths were recorded by category only.
+Phase 0 (source audit) complete and committed on `master` (`662c101`).
+Phase 1 (repository foundation) complete on
+`feature/phase1-repository-foundation`: full directory structure
+(`forgeops/` with 12 subpackages, `shared/`, `claude-plugin/`,
+`codex-plugin/`, `installers/`, `examples/`, `tests/`, `logs/`) plus root
+`README.md`, `LICENSE` (proprietary placeholder), `CHANGELOG.md`,
+`pyproject.toml`, and `.gitignore`. Every non-trivial placeholder states
+which phase implements it for real — nothing pretends to be finished.
+`installers/install.ps1|sh` and `uninstall.ps1|sh` and the `forgeops`
+CLI entry point (`forgeops/cli/__init__.py:main`) are stub-only and exit
+non-zero with a clear "not yet implemented" message rather than silently
+no-op'ing.
 
 Before Phase 0 began, `C:\Users\joshd\ForgeOps` was found to contain a
 stray full copy of the TrendForge working tree (including real `.env`
 files) inside an empty git repo. Flagged to the operator, who cleaned it
-out externally. See `.agent/DECISIONS.md` for the full account. ForgeOps
-is now a genuinely empty repo (branch `master`, 0 commits) as of the start
-of this checkpoint.
+out externally. Full account in `.agent/DECISIONS.md`.
 
 ## Branch/HEAD
 
-`master`, about to receive its first commit (this Phase 0 checkpoint).
+`feature/phase1-repository-foundation`, branched from `master` @
+`662c101`. Phase 1 changes not yet committed (next action below).
+`master` remains at the Phase 0 checkpoint commit only.
 
 ## Next Action
 
-1. Commit the Phase 0 checkpoint (`docs/*.md`, `.agent/*`) on `master`.
-2. Begin Phase 1: create the full repository structure (`forgeops/`,
-   `shared/`, `claude-plugin/`, `codex-plugin/`, `installers/`,
-   `examples/`, `tests/`, `docs/`, `logs/`), plus root `README.md`,
-   `LICENSE`, `CHANGELOG.md`, `pyproject.toml`. Create a feature branch
-   for this and all subsequent implementation work — do not build Phase 1+
-   directly on `master`. No remote, no push.
-3. Continue autonomously through Phases 2+ per the mission brief,
+1. Review Phase 1 diff (`git status`), run the ported secret/dangerous-
+   diff scan conceptually (no CLI exists yet to run it programmatically —
+   this is a placeholder-only commit, hand-reviewed), then commit on
+   `feature/phase1-repository-foundation`.
+2. Begin Phase 2: implement the deterministic Python CLI
+   (`forgeops doctor/init/audit/status/checkpoint/handoff/changed/test/
+   release-check/process-list/cleanup/worktree/agents/approvals/
+   validate-config/install/uninstall`), starting with repo-root discovery
+   and the ported `repository_snapshot.py` / `git_safety_check.py` /
+   `scan_secret_patterns.py` logic (see `docs/reusable-components.md`).
+3. Continue autonomously through Phases 3+ per the mission brief,
    checkpointing `.agent/HANDOFF.md` and `.agent/DECISIONS.md` after each
    phase, pausing only for the approval-gated categories the mission
    names explicitly (installation, authentication, secrets access,

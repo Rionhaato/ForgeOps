@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "repository": {
+    "name": "ForgeOps",
+    "root": "C:\\Users\\joshd\\ForgeOps",
+    "reference_repo_readonly": "C:\\Users\\joshd\\TrendForge"
+  },
+  "branch": "master",
+  "head": null,
+  "remote": {
+    "configured": false,
+    "ahead": null,
+    "behind": null
+  },
+  "changed_files": {
+    "modified": 0,
+    "untracked": 0,
+    "staged": 0
+  },
+  "mission": "Build the ForgeOps 1.0 reusable toolkit (governance, state, testing, hooks, skills, agents) per the operator's mission brief.",
+  "completed_work": [
+    "Phase 0: source audit of TrendForge reusable material (docs/source-audit.md, docs/reusable-components.md, docs/known-failures.md, docs/security-boundaries.md, docs/architecture-decision.md)"
+  ],
+  "recent_tests": [],
+  "blockers": [
+    {
+      "description": "claude/codex CLI executables not found on PATH",
+      "severity": "low",
+      "affects": "Phase 8 real-executable testing only; adapter can be built and tested against a mock"
+    }
+  ],
+  "active_agents": [],
+  "owned_files": [],
+  "active_worktrees": [],
+  "pending_approvals": [],
+  "background_processes": [],
+  "last_checkpoint": {
+    "phase": "Phase 0 — Source Audit",
+    "timestamp_local": "2026-07-21",
+    "docs": [
+      "docs/source-audit.md",
+      "docs/reusable-components.md",
+      "docs/known-failures.md",
+      "docs/security-boundaries.md",
+      "docs/architecture-decision.md"
+    ]
+  },
+  "next_action": "Commit Phase 0 checkpoint on master, then create a feature branch and begin Phase 1 repository foundation (forgeops/, shared/, claude-plugin/, codex-plugin/, installers/, examples/, tests/, docs/, logs/, plus root README/LICENSE/CHANGELOG/pyproject.toml)."
+}

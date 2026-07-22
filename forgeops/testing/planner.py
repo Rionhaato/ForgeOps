@@ -381,6 +381,90 @@ def _plan_node(
     ), None
 
 
+def build_full_test_plan(repo_root: Path, config: dict) -> TestPlan:
+    """Full-suite counterpart to build_test_plan(): ignores changed files
+    entirely (changed_files is always [] on the returned plan) and
+    selects one broad command per detected, test-evidenced technology
+    group, regardless of what has or hasn't changed. Reuses the same
+    TestPlan/TestCommand model and the same _group_root/_node_runner_command
+    helpers as targeted planning, so forgeops test --full and --targeted
+    share one execution/rendering path (forgeops/testing/executor.py,
+    forgeops/cli/test.py:render_human).
+
+    Policy, mirroring build_test_plan's rules 2 and 7 exactly:
+    - A detected stack with test-runner evidence (pytest for Python; a
+      package.json 'scripts.test' or a jest/vitest devDependency for
+      Node) -> one broad command for that stack's full suite.
+    - A detected stack with no test-runner evidence -> a warning naming
+      the missing evidence, never an invented command.
+    - No supported stack detected at all -> a warning; empty plan.
+    """
+    plan = TestPlan(changed_files=[])
+
+    tree: TreeScan = scan_repo_tree(repo_root, config["oversized_file_bytes"], config["secret_scan_max_file_bytes"])
+    stack_findings: list[StackFinding] = detect_stack(repo_root, tree)
+    stack_by_tech = {f.technology: f for f in stack_findings}
+
+    has_python = any(t in stack_by_tech for t in ("python", "fastapi", "pytest"))
+    has_node = any(t in stack_by_tech for t in ("node", "react"))
+
+    if has_python:
+        py_evidence = stack_by_tech.get("python", stack_by_tech.get("fastapi", stack_by_tech.get("pytest")))
+        evidence_paths = py_evidence.evidence if py_evidence else []
+        cwd = _group_root(evidence_paths)
+        if "pytest" in stack_by_tech:
+            plan.commands.append(TestCommand(
+                command=[sys.executable, "-m", "pytest"],
+                cwd=cwd,
+                reason="full suite requested (forgeops test --full)",
+                scope="broad",
+                confidence="high",
+                fallback=False,
+                technology="pytest",
+                log_name="python-pytest.log",
+            ))
+        else:
+            plan.warnings.append(
+                "Python stack detected but no pytest evidence was found (no pytest.ini, conftest.py, "
+                "[tool.pytest.ini_options] in pyproject.toml, or 'pytest' in requirements.txt) - "
+                "not inventing a test command."
+            )
+            plan.skipped_technologies.append("python")
+
+    if has_node:
+        node_evidence = stack_by_tech.get("node")
+        evidence_paths = node_evidence.evidence if node_evidence else []
+        package_managers = [t for t in ("npm", "pnpm", "yarn") if t in stack_by_tech]
+        cwd = _group_root(evidence_paths)
+        package_json = repo_root / cwd / "package.json" if cwd != "." else repo_root / "package.json"
+        base_command = _node_runner_command(package_json, package_managers[0] if package_managers else None)
+        if base_command is not None:
+            plan.commands.append(TestCommand(
+                command=base_command,
+                cwd=cwd,
+                reason="full suite requested (forgeops test --full)",
+                scope="broad",
+                confidence="high",
+                fallback=False,
+                technology="node",
+                log_name="node-test.log",
+            ))
+        else:
+            plan.warnings.append(
+                "Node stack detected but no runnable test command was found (no package.json "
+                "'scripts.test', and no jest/vitest devDependency) - not inventing a test command."
+            )
+            plan.skipped_technologies.append("node")
+
+    if not has_python and not has_node:
+        plan.warnings.append(
+            "No supported stack (Python or Node) was detected in this repository - no test command was selected."
+        )
+
+    plan.scope = "broad" if plan.commands else "none"
+    return plan
+
+
 def build_test_plan(repo_root: Path, changed: ChangedFilesResult, config: dict) -> TestPlan:
     changed_paths = changed.all_paths
     plan = TestPlan(changed_files=changed_paths)

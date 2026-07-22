@@ -7,11 +7,11 @@ every command — no command defines its own ad-hoc codes.
 |---|---|---|
 | 0 | `SUCCESS` | No warnings, no blocking findings. |
 | 1 | `WARNINGS_PRESENT` | Completed with one or more non-blocking warnings (e.g. an optional tool missing, a state file present but invalid). |
-| 2 | `BLOCKED` | A blocking safety finding was reported — currently only `forgeops audit` can return this (a likely secret, or a dangerous filename pattern in working-tree changes). |
+| 2 | `BLOCKED` | A blocking safety finding was reported — `forgeops audit` directly (a likely secret, or a dangerous filename pattern in working-tree changes), or `forgeops release-check` when its aggregated audit result is blocked. |
 | 3 | `INVALID_CONFIG` | `[tool.forgeops]` in `pyproject.toml` exists but is malformed (bad TOML, wrong value type, non-table section). |
 | 4 | `REPO_NOT_FOUND` | No git repository could be discovered at or above the given path (or an explicit `--repo` path doesn't exist). |
-| 5 | `COMMAND_EXECUTION_FAILURE` | A required external command failed or was unavailable — currently only `git` itself. |
-| 6 | `INTERNAL_ERROR` | Reserved for an unexpected internal ForgeOps error. Not yet raised anywhere in Phase 2A (see "Known limitations" in `docs/cli-architecture.md`) — defined now so later phases don't need to renumber anything. |
+| 5 | `COMMAND_EXECUTION_FAILURE` | A required external command failed or was unavailable — `git` itself, or (since Phase 2B) a selected `forgeops test`/`release-check` command that didn't complete successfully (nonzero exit, timeout, or missing executable). |
+| 6 | `INTERNAL_ERROR` | An unexpected internal ForgeOps error. Raised by the top-level exception boundary in `forgeops/cli/__init__.py:main()` since Phase 2B (Part 5) — see "Top-level exception handling" in `docs/cli-architecture.md`. |
 
 ## Precedence
 
@@ -44,12 +44,29 @@ Per-command specifics:
   above; otherwise `BLOCKED` (2) if any check is `blocked` (a secret
   match or a dangerous filename in working-tree changes); otherwise
   `WARNINGS_PRESENT` (1) if any check warned; otherwise `SUCCESS` (0).
+- **`test --full`** (Phase 2C): identical precedence to `test --targeted`
+  (see `docs/targeted-testing.md`) - a selected command that didn't
+  complete successfully forces `COMMAND_EXECUTION_FAILURE` (5); otherwise
+  a plan warning (missing test-runner evidence, unsupported stack) forces
+  `WARNINGS_PRESENT` (1); otherwise `SUCCESS` (0).
+- **`release-check`** (Phase 2C): the *first* real caller of
+  `exit_codes.worst(*codes)` - combines its own gates' worst code with
+  `run_doctor`'s, `run_audit`'s, and `run_full_test`'s exit codes via that
+  helper. Because `worst()`'s documented precedence ranks
+  `COMMAND_EXECUTION_FAILURE` above `BLOCKED`, a repository with *both* a
+  blocked secret finding *and* a failing test suite in the same run
+  reports exit code 5, not 2 - the JSON output's `data.blocking_checks`
+  still lists both, so nothing is hidden; only the single integer can't
+  represent two simultaneous "worst" reasons. See `docs/release-check.md`
+  for the full explanation. This precedence was defined in Phase 2A and
+  is unchanged by Phase 2C - `release-check` simply exercises it for the
+  first time.
 
 ## Stability guarantee
 
-These seven codes and their meanings are the stable contract for Phase
-2A. New commands in Phase 2B must reuse this table rather than
-introducing new numeric meanings — if a new distinction is needed, it
+These seven codes and their meanings are the stable contract established
+in Phase 2A. Phase 2B and Phase 2C both reused this table rather than
+introducing new numeric meanings - if a new distinction is needed, it
 should be expressed as a new `checks[]` status detail or `data` field,
 not a new exit code, to keep automation (hooks, CI, other tooling)
 written against these seven codes forward-compatible.

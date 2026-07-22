@@ -137,3 +137,54 @@ disposable mixed React+FastAPI example) and a real subprocess execution
 against a real tool (here: `npm`) are what surfaced these two. Both fixes
 shipped with permanent regression tests. Full account:
 `docs/phase2b-validation.md`.
+
+## 2026-07-22 — release-check aggregates existing run_* functions, never re-derives their checks
+
+`forgeops release-check`'s mission was explicit: "aggregate existing
+deterministic checks instead of duplicating their implementations."
+Implemented literally - `run_release_check` calls `run_doctor(...)`,
+`run_audit(...)`, and `run_full_test(...)` directly (the same functions
+their own CLI commands call), and folds each `CommandResult.checks` list
+into its own, prefixed by source (`doctor.*`, `audit.*`, `test.*`) so
+provenance stays traceable. This is a deliberate architectural choice,
+not just an implementation shortcut: it means release-check's own
+surface area for new bugs is small (three new gates: working-tree
+cleanliness, branch/HEAD availability, dependency-free `compileall`
+validation), and any future fix to doctor's or audit's own checks
+automatically improves release-check too, with nothing to keep in sync.
+
+## 2026-07-22 — exit_codes.worst() precedence nuance surfaced by its first real caller
+
+`exit_codes.worst()` was defined in Phase 2A (`forgeops/core/exit_codes.py`)
+but had zero real callers until `release-check` became the first one,
+using it to combine its own gates' worst exit code with `run_doctor`'s,
+`run_audit`'s, and `run_full_test`'s. Its documented precedence ranks
+`COMMAND_EXECUTION_FAILURE` (5) above `BLOCKED` (2) - so a repository with
+both a leaked secret (blocked) and a failing test suite (command
+execution failure) in the same run reports exit code 5, not 2. This
+surfaced immediately while writing the first adversarial test for this
+exact scenario (a fixture repo with a secret but no real test file,
+where pytest's own "no tests collected" exit 5 out-ranked the expected
+`BLOCKED` result). Deliberately not changed - the precedence is
+pre-existing Phase 2A architecture, and this bounded Phase 2C checkpoint
+was explicitly scoped to implement `test --full` and `release-check`,
+not redesign exit-code precedence. Instead: documented explicitly in
+`docs/release-check.md` and `docs/cli-exit-codes.md`, and
+`data.blocking_checks` in release-check's JSON output always lists every
+blocking finding regardless of which one the single exit-code integer
+reflects, so nothing is actually hidden from a consumer that reads past
+the bare exit code.
+
+## 2026-07-22 — Commit requires explicit authorization, not the standing "commit after gates pass" policy
+
+Phase 2A and Phase 2B both closed with a commit as part of their own
+standing instructions ("create one coherent commit only after every
+required gate passes"). This phase's instructions were different and
+more restrictive: "Do not create a commit unless Joshua explicitly
+authorizes it." Followed literally - all validation gates for Phase 2C
+passed (300 tests, compileall clean, TrendForge unchanged, no remote, git
+diff --check clean), but no commit was made. `.agent/HANDOFF.md` records
+the exact commit message to use once authorization is given. Lesson:
+each checkpoint's own instructions on commit policy take precedence over
+the pattern established by prior checkpoints - don't assume the same
+commit-at-the-end behavior carries forward without re-checking.

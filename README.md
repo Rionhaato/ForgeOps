@@ -17,10 +17,13 @@ foundation: `forgeops doctor`, `forgeops status`, and `forgeops audit` are
 real, read-only, and covered by tests. Phase 2B added changed-file
 detection and targeted test planning/execution (`forgeops changed`,
 `forgeops test --targeted`), a project CLAUDE.md, top-level CLI exception
-handling, and hardening for the secret-scanner's allowlist marker. See
-`docs/architecture-decision.md` for why this project exists and what it
-deliberately does not build, `docs/cli-architecture.md` for how the CLI
-is put together, and `.agent/HANDOFF.md` for current progress.
+handling, and hardening for the secret-scanner's allowlist marker. Phase
+2C added `forgeops test --full` (the complete supported suite, ignoring
+changed files) and `forgeops release-check` (a read-only release-readiness
+gate aggregating doctor/audit/test --full into one ready/not-ready
+verdict). See `docs/architecture-decision.md` for why this project exists
+and what it deliberately does not build, `docs/cli-architecture.md` for
+how the CLI is put together, and `.agent/HANDOFF.md` for current progress.
 
 ## CLAUDE.md vs. `.agent/` state files
 
@@ -52,6 +55,8 @@ forgeops status                # concise repository state
 forgeops audit                   # read-only security/hygiene audit
 forgeops changed                   # classified working-tree change report
 forgeops test --targeted             # plan + run tests for what changed
+forgeops test --full                   # run the complete supported suite(s)
+forgeops release-check                   # read-only release-readiness gate
 
 forgeops <command> --json        # structured JSON instead of human-readable text
 forgeops <command> --repo <path> # inspect a repository other than the current directory
@@ -59,13 +64,14 @@ python -m forgeops <command>     # equivalent to the forgeops console script
 
 forgeops test --targeted --plan     # show the plan, run nothing
 forgeops test --targeted --dry-run  # show exactly what would execute, run nothing
+forgeops test --full --plan            # same, for the complete suite instead of changed files
 ```
 
 Every other command named in the long-term design (`init`, `checkpoint`,
-`handoff`, `release-check`, `process-list`, `cleanup`, `worktree`,
-`agents`, `approvals`, `validate-config`, `install`, `uninstall`) is
-registered but not yet implemented — see `docs/phase2b-validation.md` for
-the exact recommended Phase 2C scope.
+`handoff`, `process-list`, `cleanup`, `worktree`, `agents`, `approvals`,
+`validate-config`, `install`, `uninstall`) is registered but not yet
+implemented — see `docs/phase2c-validation.md` for the exact recommended
+next scope.
 
 ## Layout
 

@@ -1,8 +1,8 @@
 """Command-line entry points. Phase 2A implemented doctor/status/audit;
-Phase 2B adds changed/test --targeted. Every other command named in the
-mission brief is intentionally not registered yet and prints a clear
-"not implemented" message rather than being silently absent - see
-docs/cli-architecture.md.
+Phase 2B added changed/test --targeted; Phase 2C adds test --full and
+release-check. Every other command named in the mission brief is
+intentionally not registered yet and prints a clear "not implemented"
+message rather than being silently absent - see docs/cli-architecture.md.
 
 Top-level exception handling (Phase 2B, Part 5): run_fn()/render_fn()
 calls are wrapped in a single boundary here. Expected user/configuration
@@ -25,6 +25,7 @@ from pathlib import Path
 from forgeops.cli import audit as audit_cmd
 from forgeops.cli import changed as changed_cmd
 from forgeops.cli import doctor as doctor_cmd
+from forgeops.cli import release_check as release_check_cmd
 from forgeops.cli import status as status_cmd
 from forgeops.cli import test as test_cmd
 from forgeops.core import exit_codes
@@ -35,7 +36,7 @@ from forgeops.security.redact import redact_text
 
 PHASE_2A_COMMANDS = ("doctor", "status", "audit")
 NOT_YET_IMPLEMENTED_COMMANDS = (
-    "init", "checkpoint", "handoff", "release-check",
+    "init", "checkpoint", "handoff",
     "process-list", "cleanup", "worktree", "agents", "approvals",
     "validate-config", "install", "uninstall",
 )
@@ -62,12 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
     changed_sub.add_argument("--unstaged", action="store_true", help="show only unstaged tracked files")
     changed_sub.add_argument("--untracked", action="store_true", help="show only untracked files")
 
-    test_sub = subparsers.add_parser("test", help="forgeops test --targeted")
+    test_sub = subparsers.add_parser("test", help="forgeops test --targeted | --full")
     test_sub.add_argument("--json", action="store_true")
     test_sub.add_argument("--repo", default=None)
-    test_sub.add_argument("--targeted", action="store_true", help="required in Phase 2B - only targeted mode is implemented")
+    test_mode_group = test_sub.add_mutually_exclusive_group()
+    test_mode_group.add_argument("--targeted", action="store_true", help="plan/run tests for the current working-tree changes")
+    test_mode_group.add_argument("--full", action="store_true", help="run the complete supported test suite(s) for every detected technology")
     test_sub.add_argument("--plan", action="store_true", help="show the plan, execute nothing")
     test_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show exactly what would run, execute nothing")
+
+    release_check_sub = subparsers.add_parser("release-check", help="forgeops release-check")
+    release_check_sub.add_argument("--json", action="store_true")
+    release_check_sub.add_argument("--repo", default=None)
 
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
@@ -119,7 +126,11 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
             args.repo, staged=args.staged, unstaged=args.unstaged, untracked=args.untracked,
         )
     if args.command == "test":
+        if args.full:
+            return test_cmd.run_full_test(args.repo, plan_only=args.plan, dry_run=args.dry_run)
         return test_cmd.run_test_targeted(args.repo, plan_only=args.plan, dry_run=args.dry_run)
+    if args.command == "release-check":
+        return release_check_cmd.run_release_check(args.repo)
     # Resolved via getattr on the module, not a pre-bound reference, so
     # that monkeypatching e.g. forgeops.cli.doctor_cmd.run_doctor (the
     # normal way tests substitute behavior) actually takes effect - a
@@ -135,6 +146,8 @@ def _render_result(args: argparse.Namespace, result: CommandResult) -> str:
         return changed_cmd.render_human(result)
     if args.command == "test":
         return test_cmd.render_human(result)
+    if args.command == "release-check":
+        return release_check_cmd.render_human(result)
     module = _SIMPLE_MODULES[args.command]
     return module.render_human(result)
 
@@ -143,15 +156,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "test" and not args.targeted:
+    if args.command == "test" and not (args.targeted or args.full):
         print(
-            "forgeops test: only --targeted mode is implemented in Phase 2B "
-            "(release-check / --full is future work). See docs/targeted-testing.md.",
+            "forgeops test: pass --targeted or --full (release-check composes --full; "
+            "see docs/targeted-testing.md).",
             file=sys.stderr,
         )
         return 1
 
-    dispatchable = args.command in _SIMPLE_MODULES or args.command in ("changed", "test")
+    dispatchable = args.command in _SIMPLE_MODULES or args.command in ("changed", "test", "release-check")
     if not dispatchable:
         print(
             f"forgeops {args.command}: not yet implemented (see docs/cli-architecture.md for current scope). "

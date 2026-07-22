@@ -135,3 +135,99 @@ def test_missing_repo_context_skips_log_write_gracefully(tmp_path, monkeypatch, 
     captured = capsys.readouterr()
     assert exit_code == exit_codes.INTERNAL_ERROR
     assert "diagnostic log not written" in captured.err
+
+
+# --- Phase 2C: forgeops test --full and forgeops release-check share the
+# same top-level boundary, exercised here explicitly per command. ---
+
+def test_full_test_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in full test")
+
+    monkeypatch.setattr("forgeops.cli.test_cmd.run_full_test", boom)
+    exit_code = main(["test", "--full", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in full test" in captured.err
+
+
+def test_full_test_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in full test")
+
+    monkeypatch.setattr("forgeops.cli.test_cmd.run_full_test", boom)
+    exit_code = main(["test", "--full", "--repo", str(git_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_full_test_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in full test")
+
+    monkeypatch.setattr("forgeops.cli.test_cmd.run_full_test", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in full test"):
+        main(["--debug", "test", "--full", "--repo", str(git_repo)])
+
+
+def test_release_check_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in release-check")
+
+    monkeypatch.setattr("forgeops.cli.release_check_cmd.run_release_check", boom)
+    exit_code = main(["release-check", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in release-check" in captured.err
+
+
+def test_release_check_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in release-check")
+
+    monkeypatch.setattr("forgeops.cli.release_check_cmd.run_release_check", boom)
+    exit_code = main(["release-check", "--repo", str(git_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_release_check_diagnostic_log_redacted(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("leaked postgres://user:hunter2@host/db in the error")  # forgeops:allow-secret
+
+    monkeypatch.setattr("forgeops.cli.release_check_cmd.run_release_check", boom)
+    main(["release-check", "--repo", str(git_repo)])
+    log_files = list((git_repo / "logs" / "release-check").glob("*/internal_error.log"))
+    assert len(log_files) == 1
+    content = log_files[0].read_text(encoding="utf-8")
+    assert "hunter2" not in content
+    assert "[REDACTED_DB_URL]" in content
+
+
+def test_release_check_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in release-check")
+
+    monkeypatch.setattr("forgeops.cli.release_check_cmd.run_release_check", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in release-check"):
+        main(["--debug", "release-check", "--repo", str(git_repo)])
+
+
+def test_test_command_requires_a_mode_flag(git_repo, capsys):
+    exit_code = main(["test", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "--targeted or --full" in captured.err
+
+
+def test_test_command_rejects_both_mode_flags_at_once(git_repo):
+    with pytest.raises(SystemExit):
+        main(["test", "--targeted", "--full", "--repo", str(git_repo)])

@@ -1,4 +1,4 @@
-# CLI Architecture (Phase 2A + 2B)
+# CLI Architecture (Phase 2A + 2B + 2C)
 
 ## Module layout
 
@@ -12,7 +12,8 @@ forgeops/
     status.py             forgeops status
     audit.py               forgeops audit
     changed.py              forgeops changed
-    test.py                  forgeops test --targeted
+    test.py                  forgeops test --targeted | --full
+    release_check.py          forgeops release-check (aggregates doctor/audit/test --full)
   core/
     paths.py             repo-root discovery, path normalization
     git.py                read-only git-state inspection (status entries, renames, ahead/behind, ...)
@@ -34,15 +35,21 @@ forgeops/
   reporting/
     logs.py                 logs/<command>/<timestamp>/ persistence
   testing/
-    planner.py              deterministic targeted-test plan construction
+    planner.py              deterministic targeted- and full-test plan construction
     executor.py              sequential, bounded-timeout test-plan execution
 ```
 
 Every command module (`doctor.py`/`status.py`/`audit.py`/`changed.py`)
 exposes two functions: `run_<command>(repo_arg, cwd=None, clock=None,
 write_log=True, ...) -> CommandResult` and `render_human(result) -> str`.
-`test.py` follows the same shape (`run_test_targeted`, `render_human`)
-plus `plan_only`/`dry_run` flags. `run_*` never touches `sys.argv`,
+`test.py` follows the same shape but exposes **two** run functions,
+`run_test_targeted` and `run_full_test` (Phase 2C), sharing one
+`render_human` since both produce the same `plan`/`execution` data
+shape. `release_check.py` (Phase 2C) follows the same shape too
+(`run_release_check`, `render_human`), but its `run_*` function itself
+calls `run_doctor`/`run_audit`/`run_full_test` internally rather than
+re-deriving their checks - see `docs/release-check.md`. `run_*` never
+touches `sys.argv`,
 `print`, or `sys.exit` — it's a pure function over its arguments, which is
 what makes it directly unit-testable (see `tests/integration/test_cli_*.py`)
 without spawning a subprocess. `main()` in `forgeops/cli/__init__.py` is
@@ -170,12 +177,11 @@ Only a genuinely unexpected exception (a real bug) is caught here:
 - `forgeops audit`'s secret scan is line-based pattern matching, not a
   parser — see `docs/audit-security-model.md` for what this does and
   doesn't catch.
-- `forgeops init`, `checkpoint`, `handoff`, `release-check`,
-  `process-list`, `cleanup`, `worktree`, `agents`, `approvals`,
-  `validate-config`, `install`, `uninstall` are registered in the
-  argument parser (so `forgeops <name> --help` works and produces a clean
-  error) but not implemented — invoking any of them prints "not yet
-  implemented" to stderr and exits 1. `forgeops test` without `--targeted`
-  behaves the same way (`--full`/release-check-driven testing is future
-  work). See `docs/phase2b-validation.md` for the exact recommended
-  Phase 2C scope.
+- `forgeops init`, `checkpoint`, `handoff`, `process-list`, `cleanup`,
+  `worktree`, `agents`, `approvals`, `validate-config`, `install`,
+  `uninstall` are registered in the argument parser (so `forgeops <name>
+  --help` works and produces a clean error) but not implemented —
+  invoking any of them prints "not yet implemented" to stderr and exits
+  1. `forgeops test` without `--targeted` or `--full` behaves the same
+  way. See `docs/phase2c-validation.md` for the exact recommended next
+  scope.

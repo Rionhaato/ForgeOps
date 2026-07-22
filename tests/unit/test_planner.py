@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from forgeops.detectors.changed import ChangedFile, ChangedFilesResult, classify_area, classify_technology, is_broad_impact
-from forgeops.testing.planner import build_test_plan
+from forgeops.testing.planner import build_full_test_plan, build_test_plan
 
 CONFIG = {"oversized_file_bytes": 5 * 1024 * 1024, "secret_scan_max_file_bytes": 2 * 1024 * 1024}
 
@@ -217,3 +217,79 @@ def test_plan_to_dict_is_json_serializable(tmp_path: Path):
     text = plan.to_json()
     parsed = json.loads(text)
     assert parsed["scope"] == plan.scope
+
+
+# --- build_full_test_plan (forgeops test --full) ---
+
+def test_full_plan_ignores_changed_files_field(tmp_path: Path):
+    _write_python_project(tmp_path)
+    (tmp_path / "test_ok.py").write_text("def test_ok(): assert True", encoding="utf-8")
+    plan = build_full_test_plan(tmp_path, CONFIG)
+    assert plan.changed_files == []
+
+
+def test_full_plan_python_selects_bare_pytest(tmp_path: Path):
+    _write_python_project(tmp_path)
+    (tmp_path / "test_ok.py").write_text("def test_ok(): assert True", encoding="utf-8")
+    plan = build_full_test_plan(tmp_path, CONFIG)
+    assert len(plan.commands) == 1
+    cmd = plan.commands[0]
+    assert cmd.technology == "pytest"
+    assert cmd.scope == "broad"
+    assert cmd.confidence == "high"
+    assert cmd.fallback is False
+    # No explicit file targets - the whole suite, not a narrowed subset.
+    assert cmd.command[-1] == "pytest" or cmd.command[-1].endswith("pytest")
+
+
+def test_full_plan_node_selects_declared_test_script(tmp_path: Path):
+    _write_node_project(tmp_path)
+    plan = build_full_test_plan(tmp_path, CONFIG)
+    assert len(plan.commands) == 1
+    assert plan.commands[0].technology == "node"
+
+
+def test_full_plan_mixed_repo_selects_both(tmp_path: Path):
+    _write_python_project(tmp_path)
+    _write_node_project(tmp_path)
+    plan = build_full_test_plan(tmp_path, CONFIG)
+    technologies = {c.technology for c in plan.commands}
+    assert technologies == {"pytest", "node"}
+    assert all(c.scope == "broad" for c in plan.commands)
+
+
+def test_full_plan_python_without_pytest_evidence_warns_not_invents(tmp_path: Path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("x = 1", encoding="utf-8")
+    plan = build_full_test_plan(tmp_path, CONFIG)
+    assert plan.commands == []
+    assert any("pytest" in w.lower() for w in plan.warnings)
+
+
+def test_full_plan_node_without_runnable_command_warns(tmp_path: Path):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {}}), encoding="utf-8")
+    plan = build_full_test_plan(tmp_path, CONFIG)
+    assert plan.commands == []
+    assert any("test command" in w.lower() for w in plan.warnings)
+
+
+def test_full_plan_unsupported_repo_warns_and_is_empty(tmp_path: Path):
+    (tmp_path / "main.go").write_text("package main", encoding="utf-8")
+    plan = build_full_test_plan(tmp_path, CONFIG)
+    assert plan.commands == []
+    assert plan.scope == "none"
+    assert plan.warnings != []
+
+
+def test_full_plan_subdirectory_project_uses_group_cwd(tmp_path: Path):
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "pyproject.toml").write_text("[project]\nname='x'\n[tool.pytest.ini_options]\n", encoding="utf-8")
+    plan = build_full_test_plan(tmp_path, CONFIG)
+    assert plan.commands[0].cwd == "backend"
+
+
+def test_full_plan_reason_mentions_full_suite(tmp_path: Path):
+    _write_python_project(tmp_path)
+    plan = build_full_test_plan(tmp_path, CONFIG)
+    assert "full suite" in plan.commands[0].reason.lower()

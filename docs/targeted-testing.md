@@ -130,6 +130,54 @@ own pairing needs (see `docs/phase2b-validation.md`).
   only the plan itself (`WARNINGS_PRESENT` if the plan has a coverage
   gap, `SUCCESS` otherwise).
 
+## `forgeops test --full` (Phase 2C)
+
+Runs the complete supported test suite(s) for every detected technology,
+ignoring changed files entirely - `--targeted` and `--full` are mutually
+exclusive modes of the same `forgeops test` command
+(`test --targeted --full` is rejected by argparse before either runs).
+
+```
+forgeops test --full
+forgeops test --full --json
+forgeops test --full --repo <path>
+forgeops test --full --plan       # show the plan, execute nothing
+forgeops test --full --dry-run    # show exactly what would run, execute nothing
+```
+
+Built by `forgeops/testing/planner.py:build_full_test_plan`, which
+shares the `TestPlan`/`TestCommand` model, the `_group_root`/
+`_node_runner_command` helpers, and the `execute_plan` executor with
+`--targeted` - `--full` and `--targeted` results are rendered and
+executed through the exact same code path (`forgeops/cli/test.py:render_human`
+handles both), only the *plan construction* differs:
+
+- **Ignores changed files completely.** `plan.changed_files` is always
+  `[]` for a full-suite plan - this is intentional, not a bug: there is
+  no "changed" concept driving a full run.
+- **One broad command per test-evidenced technology group** - `pytest`
+  for Python (only if pytest evidence exists), the declared
+  `package.json` test script or a jest/vitest devDependency for Node
+  (only if one exists) - with no path-narrowing; the whole suite runs
+  every time.
+- **Never invents a command.** A detected stack with no test-runner
+  evidence produces a warning naming the missing evidence and is added
+  to `skipped_technologies`, exactly like `--targeted`'s rule 7 - it does
+  not silently do nothing, and it does not guess at a command.
+- **No supported stack detected at all** -> an empty plan with a warning,
+  `WARNINGS_PRESENT` exit code - not treated as success, since the user
+  explicitly asked for a full run and none was possible.
+
+### Log naming
+
+`--full` writes to the same `logs/test/<timestamp>/` directory as
+`--targeted`, using distinct filenames so the two modes' plan/summary
+logs are never confused when browsing: `test-full-plan.log` /
+`test-full-summary.log` (vs. `--targeted`'s `test-plan.log` /
+`test-summary.log`). Per-command raw output uses the same
+`python-pytest.log` / `node-test.log` names either way, since only one
+full-suite command per technology can exist in a single run.
+
 ## Known limitations
 
 - **No copy detection.** `git status` has no `--find-copies` flag (only
@@ -154,3 +202,14 @@ own pairing needs (see `docs/phase2b-validation.md`).
   ...], shell=False)` reported "executable not found" even with npm
   genuinely on PATH, because Windows Python's subprocess module doesn't
   perform PATHEXT resolution the way an interactive shell does.
+- **One Python group and one Node group per repo, not per project.**
+  `detect_stack` aggregates all evidence of a technology across the whole
+  repo into a single `StackFinding`, and `_group_root` only looks at the
+  *first* evidence path to decide the working directory. A repo with two
+  independent Python projects (e.g. `backend/` and `tools/`, each with
+  their own `pyproject.toml`) only gets one full-suite command, scoped to
+  whichever directory's manifest happened to sort first. This limitation
+  predates Phase 2C (it already applied to `--targeted`) but is more
+  visible for `--full`, since a full run's whole point is completeness.
+  Not addressed in Phase 2C, consistent with the instruction to preserve
+  accepted architecture rather than redesign stack detection.

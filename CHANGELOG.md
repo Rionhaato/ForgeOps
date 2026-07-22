@@ -6,6 +6,28 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Phase 2C — Full Test Suite and Release Check
+- Implemented `forgeops test --full`: runs the complete supported test
+  suite(s) for every detected technology, ignoring changed files
+  entirely. Shares the `TestPlan`/`TestCommand` model and executor with
+  `--targeted` (`build_full_test_plan` alongside the existing
+  `build_test_plan`); `--targeted` and `--full` are mutually exclusive
+  modes of the same `forgeops test` command.
+- Implemented `forgeops release-check`: a read-only release-readiness
+  gate that aggregates `forgeops doctor`, `forgeops audit`, and
+  `forgeops test --full` (calling their existing `run_*` functions
+  directly, never reimplementing their checks) plus three new gates
+  (working-tree cleanliness, branch/HEAD availability, and a
+  dependency-free `python -m compileall` validation). Exposes one clear
+  `release_ready` verdict and never pushes, deploys, publishes,
+  configures a remote, or mutates the repository.
+- 300 passing tests (178 unit, 122 integration), up from 250 - zero
+  regressions to Phase 2B's accepted behavior.
+- 2 new docs (`docs/release-check.md`, `docs/phase2c-validation.md`)
+  plus updates to `docs/targeted-testing.md`, `docs/cli-architecture.md`,
+  and `docs/cli-exit-codes.md` (documenting `exit_codes.worst()`'s first
+  real use and a precedence nuance it surfaced).
+
 ### Phase 2B — Targeted Testing and Claude Project Memory
 - Added a concise root `CLAUDE.md` (123 lines, 12 required sections),
   guarded by automated tests for required sections, size limit, source-of-

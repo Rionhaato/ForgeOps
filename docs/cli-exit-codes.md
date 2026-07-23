@@ -90,6 +90,19 @@ Per-command specifics:
   (in principle - guarded by a fixed test) the bounded document exceeds
   its own size ceiling; otherwise `SUCCESS` (0). Read-only - never
   returns `BLOCKED`. See `docs/context-efficiency.md`.
+- **`init`**: `BLOCKED` (2) if the target is the read-only reference
+  repository (or beneath it), or if preflight finds any managed path in
+  conflict (existing content that isn't recognizably ForgeOps-owned, or
+  malformed/schema-incompatible `.agent/CURRENT_STATE.json`) - in either
+  case nothing is written, and `--dry-run` returns the same code a real
+  run would rather than always reporting `SUCCESS`; `REPO_NOT_FOUND` (4)
+  if the target path doesn't exist or isn't a directory (reused rather
+  than a new code, since the underlying condition - "no usable target at
+  this path" - is the same shape); `COMMAND_EXECUTION_FAILURE` (5) if an
+  atomic write genuinely fails partway through (this run's new paths are
+  rolled back first); otherwise `SUCCESS` (0) for a clean or idempotent
+  initialization. Never returns `WARNINGS_PRESENT` or `INVALID_CONFIG` -
+  see `docs/project-init.md`.
 
 ## Stability guarantee
 

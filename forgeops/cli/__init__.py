@@ -28,6 +28,7 @@ from forgeops.cli import checkpoint as checkpoint_cmd
 from forgeops.cli import cleanup as cleanup_cmd
 from forgeops.cli import doctor as doctor_cmd
 from forgeops.cli import handoff as handoff_cmd
+from forgeops.cli import init as init_cmd
 from forgeops.cli import process_list as process_list_cmd
 from forgeops.cli import release_check as release_check_cmd
 from forgeops.cli import resume_context as resume_context_cmd
@@ -41,7 +42,6 @@ from forgeops.security.redact import redact_text
 
 PHASE_2A_COMMANDS = ("doctor", "status", "audit")
 NOT_YET_IMPLEMENTED_COMMANDS = (
-    "init",
     "worktree", "agents", "approvals",
     "validate-config", "install", "uninstall",
 )
@@ -104,6 +104,11 @@ def build_parser() -> argparse.ArgumentParser:
     resume_context_sub = subparsers.add_parser("resume-context", help="forgeops resume-context")
     resume_context_sub.add_argument("--json", action="store_true")
     resume_context_sub.add_argument("--repo", default=None)
+
+    init_sub = subparsers.add_parser("init", help="forgeops init [PATH]")
+    init_sub.add_argument("path", nargs="?", default=None, help="target directory to initialize (default: current directory)")
+    init_sub.add_argument("--json", action="store_true")
+    init_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be created/preserved/blocked, write nothing")
 
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
@@ -172,6 +177,8 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
         return cleanup_cmd.run_cleanup(args.repo, execute=execute)
     if args.command == "resume-context":
         return resume_context_cmd.run_resume_context(args.repo)
+    if args.command == "init":
+        return init_cmd.run_init(args.path, dry_run=args.dry_run)
     # Resolved via getattr on the module, not a pre-bound reference, so
     # that monkeypatching e.g. forgeops.cli.doctor_cmd.run_doctor (the
     # normal way tests substitute behavior) actually takes effect - a
@@ -199,6 +206,8 @@ def _render_result(args: argparse.Namespace, result: CommandResult) -> str:
         return cleanup_cmd.render_human(result)
     if args.command == "resume-context":
         return resume_context_cmd.render_human(result)
+    if args.command == "init":
+        return init_cmd.render_human(result)
     module = _SIMPLE_MODULES[args.command]
     return module.render_human(result)
 
@@ -217,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dispatchable = args.command in _SIMPLE_MODULES or args.command in (
         "changed", "test", "release-check", "checkpoint", "handoff",
-        "process-list", "cleanup", "resume-context",
+        "process-list", "cleanup", "resume-context", "init",
     )
     if not dispatchable:
         print(
@@ -235,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - deliberate top-level boundary; see module docstring
         if debug:
             raise
-        repo_root = _best_effort_repo_root(args.repo)
+        repo_root = _best_effort_repo_root(getattr(args, "repo", None) or getattr(args, "path", None))
         log_path = _write_diagnostic_log(repo_root, args.command, exc)
         message = redact_text(f"forgeops {args.command}: internal error ({type(exc).__name__}: {exc})")
         if args.json:

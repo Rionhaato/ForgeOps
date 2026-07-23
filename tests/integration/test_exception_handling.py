@@ -461,6 +461,70 @@ def test_resume_context_debug_flag_lets_exception_propagate(git_repo, monkeypatc
         main(["--debug", "resume-context", "--repo", str(git_repo)])
 
 
+def test_init_unexpected_exception_returns_internal_error(tmp_path, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in init")
+
+    monkeypatch.setattr("forgeops.cli.init_cmd.run_init", boom)
+    exit_code = main(["init", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in init" in captured.err
+    # A crash before any write must never leave a partial governance structure.
+    assert not (tmp_path / ".agent").exists()
+    assert not (tmp_path / "CLAUDE.md").exists()
+
+
+def test_init_unexpected_exception_json_mode(tmp_path, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in init")
+
+    monkeypatch.setattr("forgeops.cli.init_cmd.run_init", boom)
+    exit_code = main(["init", str(tmp_path), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_init_debug_flag_lets_exception_propagate(tmp_path, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in init")
+
+    monkeypatch.setattr("forgeops.cli.init_cmd.run_init", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in init"):
+        main(["--debug", "init", str(tmp_path)])
+
+
+def test_init_dry_run_flag_reaches_run_init(tmp_path, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_init(path_arg, dry_run=False):
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.init import run_init as real
+        return real(path_arg, write_log=False, dry_run=dry_run)
+
+    monkeypatch.setattr("forgeops.cli.init_cmd.run_init", fake_run_init)
+    main(["init", str(tmp_path), "--dry-run"])
+    assert captured_kwargs["dry_run"] is True
+
+
+def test_init_omitted_path_argument_is_passed_as_none(tmp_path, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_init(path_arg, dry_run=False):
+        captured_kwargs["path_arg"] = path_arg
+        from forgeops.cli.init import run_init as real
+        return real(path_arg, cwd=tmp_path, write_log=False, dry_run=dry_run)
+
+    monkeypatch.setattr("forgeops.cli.init_cmd.run_init", fake_run_init)
+    monkeypatch.chdir(tmp_path)
+    main(["init"])
+    assert captured_kwargs["path_arg"] is None
+
+
 def test_test_command_requires_a_mode_flag(git_repo, capsys):
     exit_code = main(["test", "--repo", str(git_repo)])
     captured = capsys.readouterr()

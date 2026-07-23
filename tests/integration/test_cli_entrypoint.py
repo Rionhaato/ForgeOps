@@ -39,9 +39,20 @@ def test_python_dash_m_forgeops_from_nested_cwd(git_repo):
 
 
 def test_python_dash_m_forgeops_not_yet_implemented_command_exits_nonzero(git_repo):
-    result = _run_module(["init", "--repo", str(git_repo)], cwd=git_repo)
+    # `worktree` remains registered-but-unimplemented; `init` graduated to a
+    # real command (see forgeops/cli/init.py) and is covered by
+    # tests/integration/test_cli_init.py instead.
+    result = _run_module(["worktree", "--repo", str(git_repo)], cwd=git_repo)
     assert result.returncode == 1
     assert "not yet implemented" in result.stderr
+
+
+def test_python_dash_m_forgeops_init_real_execution(tmp_path):
+    result = _run_module(["init", str(tmp_path)], cwd=tmp_path)
+    assert result.returncode == 0
+    assert "forgeops init" in result.stdout
+    assert (tmp_path / "CLAUDE.md").is_file()
+    assert (tmp_path / ".agent" / "CURRENT_STATE.json").is_file()
 
 
 def test_python_dash_m_forgeops_invalid_repo_path_exit_code(tmp_path):

@@ -6,6 +6,63 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Safe Project Initialization
+- Implemented `forgeops init [PATH]`: safe, deterministic bootstrap of
+  the minimum ForgeOps governance structure for a target project (a
+  root `CLAUDE.md` plus `.agent/CURRENT_STATE.json`,
+  `.agent/PROJECT_FACTS.md`, `.agent/DECISIONS.md`,
+  `.agent/HANDOFF.md`). Unlike every other command, target resolution
+  never walks upward for `.git` - the target is exactly the given PATH
+  (or cwd) - so `init` never silently initializes a different
+  parent/child repository than the one requested.
+- Ownership/conflict model: every managed path is classified
+  `missing`/`compatible`/`conflict` in a read-only preflight pass before
+  any write. `.agent/CURRENT_STATE.json` reuses the same schema-version
+  compatibility check `checkpoint`/`handoff` already have (but is
+  intentionally *more* conservative - an unsupported/malformed existing
+  state blocks the whole run rather than being silently reset). The
+  other four markdown files use a `<!-- forgeops:managed schema=1 -->`
+  first-line ownership marker, so a second `forgeops init` run
+  recognizes its own prior output as compatible (idempotent) while a
+  user's own hand-written file at the same path (no marker) is reported
+  as a conflict and never overwritten or merged. Any conflict blocks the
+  entire run - zero files are written, even ones that would otherwise be
+  fine to create.
+- Atomic, all-or-nothing writes: every file write goes through the
+  existing `atomic_write_text`; if any single write in a run fails,
+  every path *that run* created is removed again (reverse order) before
+  returning, so a failed `init` never leaves a half-initialized project.
+  Pre-existing compatible paths are never touched by rollback.
+- `--dry-run` runs the identical preflight and reports
+  would-create/would-preserve per path without writing anything, and
+  returns the **same** exit code (including `BLOCKED`) a real run would.
+- Works in a directory with no `.git` at all - git is optional for this
+  command alone, and the git executable is only ever invoked when a
+  `.git` entry is actually present.
+- Refuses to initialize the read-only reference repository
+  (`C:\Users\joshd\TrendForge`) or any path beneath it
+  (`forgeops.core.paths.is_protected_reference_path`) - a second,
+  independent enforcement layer alongside the existing
+  `.claude/hooks/pretooluse_safety.py` PreToolUse hook.
+- New: `forgeops/state/project_init.py` (pure plan builder, content
+  renderers, rollback-on-failure writer), `forgeops/cli/init.py` (thin
+  CLI handler). `forgeops/core/paths.py` gained
+  `READONLY_REFERENCE_REPO`/`is_protected_reference_path`.
+- New doc: `docs/project-init.md`. Updates to `docs/cli-architecture.md`,
+  `docs/cli-exit-codes.md`, `README.md`.
+- 579 passing tests (up from 528): plan-classification matrix (missing/
+  compatible/conflict for every managed path, malformed/unsupported-
+  schema JSON, ownership-marker present/absent), atomic rollback
+  (simulated write failure mid-run leaves no new paths, never touches
+  pre-existing compatible ones), full CLI integration coverage (omitted/
+  explicit/spacey/nonexistent/file-not-directory PATH, non-Git/Git
+  detection, dry-run semantics and exit-code agreement, human/JSON
+  output, idempotent second run, partial-initialization completion,
+  TrendForge protection with a monkeypatched fake reference path -
+  the real TrendForge checkout is never touched by any test -
+  INTERNAL_ERROR handling, secret-shaped env values never leaking), and
+  a regression test proving every existing command is unaffected.
+
 ### Context-Efficiency Foundation
 - Implemented `forgeops resume-context`: read-only, bounded-size
   (strict tested byte ceiling, `RESUME_CONTEXT_MAX_BYTES`) compact

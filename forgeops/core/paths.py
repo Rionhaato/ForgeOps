@@ -3,11 +3,36 @@ directory, an explicitly supplied path, and paths containing spaces (all
 handled natively by pathlib - no string-splitting on path separators)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
 class RepoNotFoundError(Exception):
     """Raised when no git repository root can be discovered."""
+
+
+# Mirrors CLAUDE.md section 6 and the hardcoded constant in
+# `.claude/hooks/pretooluse_safety.py` (TRENDFORGE_PATH_MARKERS) - the
+# one read-only reference repository this toolkit must never write to.
+# Deliberately duplicated rather than shared: the hook and this module
+# are two independent enforcement layers (hook = Claude Code tool-call
+# interception, this = `forgeops init`'s own target-path validation), and
+# neither should depend on the other still being wired up correctly.
+# Kept a plain module attribute, not read from project config, so a
+# project's own `pyproject.toml` can never disable this specific rule.
+READONLY_REFERENCE_REPO = Path(r"C:\Users\joshd\TrendForge")
+
+
+def is_protected_reference_path(target: Path) -> bool:
+    """True if `target` is the read-only reference repository itself, or
+    any path beneath it. A pure string comparison (case-insensitive via
+    os.path.normcase, matching Windows path semantics) - it never touches
+    the filesystem, so it can safely run before any existence check and
+    is exercised in tests via a monkeypatched READONLY_REFERENCE_REPO
+    rather than the real TrendForge checkout."""
+    target_norm = os.path.normcase(os.path.normpath(str(target)))
+    reference_norm = os.path.normcase(os.path.normpath(str(READONLY_REFERENCE_REPO)))
+    return target_norm == reference_norm or target_norm.startswith(reference_norm + os.sep)
 
 
 def normalize_path(raw: str | Path) -> Path:

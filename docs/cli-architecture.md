@@ -19,8 +19,9 @@ forgeops/
     process_list.py             forgeops process-list (read-only process discovery/classification)
     cleanup.py                   forgeops cleanup (conservative, dry-run-by-default process/registry cleanup)
     resume_context.py           forgeops resume-context (read-only, bounded-size compact resume summary)
+    init.py                      forgeops init [PATH] (safe, deterministic project bootstrap - see docs/project-init.md)
   core/
-    paths.py             repo-root discovery, path normalization
+    paths.py             repo-root discovery, path normalization, read-only reference repository protection
     git.py                read-only git-state inspection (status entries, renames, ahead/behind, ...)
     config.py             [tool.forgeops] loading (pyproject.toml)
     result.py             Check / CommandResult structured model
@@ -44,6 +45,7 @@ forgeops/
     atomic_write.py          atomic same-filesystem temp-file-then-replace text writer
     runtime_registry.py       .agent/runtime/PROCESS_REGISTRY.json load/save (shared by process-list + cleanup)
     resume_context.py          pure, bounded-size compact resume-context document builder (shared by resume-context CLI)
+    project_init.py             pure preflight-plan builder, content renderers, and rollback-on-failure writer for `forgeops init` (see docs/project-init.md)
   reporting/
     logs.py                 logs/<command>/<timestamp>/ persistence
   testing/
@@ -65,12 +67,17 @@ and `handoff.py` (Phase 2C) also follow the same shape (`run_checkpoint`/
 `run_handoff`, `render_human`, both accepting an additional `dry_run`
 keyword) - see `docs/checkpoint-and-handoff.md` for their state-writing
 behavior, atomic-write guarantee, and the consistency model between the
-two. `process_list.py` (read-only) and `cleanup.py` (mutating, the one
-exception in this toolkit) round out the same shape - `run_process_list`,
+two. `process_list.py` (read-only) and `cleanup.py` (mutating, one of two
+exceptions in this toolkit) round out the same shape - `run_process_list`,
 `run_cleanup` (accepting `execute: bool = False`, defaulting to a dry
 run), `render_human` - see `docs/process-list-and-cleanup.md` for the
 classification model, PID-reuse protection, and cleanup's strict safety
-invariants. `run_*` never touches `sys.argv`,
+invariants. `init.py` (the other mutating exception; `run_init`,
+accepting `dry_run: bool = False`, `render_human`) resolves its own
+target directly from a `path` argument rather than via
+`resolve_repo_root` - see "Target resolution" in `docs/project-init.md`
+for why it deliberately does not follow the shared repo-discovery
+convention every other command uses. `run_*` never touches `sys.argv`,
 `print`, or `sys.exit` — it's a pure function over its arguments, which is
 what makes it directly unit-testable (see `tests/integration/test_cli_*.py`)
 without spawning a subprocess. `main()` in `forgeops/cli/__init__.py` is
@@ -100,7 +107,10 @@ Both work identically:
 Both accept `--json` (structured output) and `--repo <path>` (explicit
 repository path; otherwise discovered from the current working directory,
 walking upward for a `.git` entry — works from a nested directory and
-handles paths containing spaces natively via `pathlib`).
+handles paths containing spaces natively via `pathlib`). `init` is the
+one exception: `forgeops init [PATH]` takes a positional target path
+instead of `--repo`, and deliberately never walks upward for `.git` —
+see "Target resolution" in `docs/project-init.md`.
 
 ## The `CommandResult` / `Check` model
 
@@ -198,15 +208,16 @@ Only a genuinely unexpected exception (a real bug) is caught here:
 - `forgeops audit`'s secret scan is line-based pattern matching, not a
   parser — see `docs/audit-security-model.md` for what this does and
   doesn't catch.
-- `forgeops init`, `worktree`, `agents`, `approvals`, `validate-config`,
+- `forgeops worktree`, `agents`, `approvals`, `validate-config`,
   `install`, `uninstall` are registered in the argument parser (so
   `forgeops <name> --help` works and produces a clean error) but not
   implemented — invoking any of them prints "not yet implemented" to
   stderr and exits 1. `forgeops test` without `--targeted` or `--full`
-  behaves the same way. `checkpoint`, `handoff`, `process-list`, and
-  `cleanup` are now implemented (see `docs/checkpoint-and-handoff.md`,
-  `docs/process-list-and-cleanup.md`). See `docs/phase2c-validation.md`
-  for prior recommended-next-scope notes.
+  behaves the same way. `checkpoint`, `handoff`, `process-list`,
+  `cleanup`, and `init` are now implemented (see
+  `docs/checkpoint-and-handoff.md`, `docs/process-list-and-cleanup.md`,
+  `docs/project-init.md`). See `docs/phase2c-validation.md` for prior
+  recommended-next-scope notes.
 - Process discovery (`forgeops/detectors/processes.py`) is Windows-only
   today - `forgeops process-list`/`forgeops cleanup` report a clear
   `WARNINGS_PRESENT` limitation and an empty process list on other

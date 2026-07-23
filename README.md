@@ -33,13 +33,18 @@ resume-context` (a read-only, bounded-size compact summary for a new
 session to consume instead of rereading state files), three project-local
 skills, one read-only recovery subagent, two minimal deterministic
 Claude Code hooks, and a read-only Superpowers compatibility record (see
-`docs/context-efficiency.md`).
+`docs/context-efficiency.md`). Most recently, `forgeops init [PATH]`
+(safe, deterministic bootstrap of the minimum ForgeOps governance
+structure for a target project - ownership/conflict detection, atomic
+writes with rollback, TrendForge protection, and non-Git support - see
+`docs/project-init.md`).
 See `docs/architecture-decision.md` for why this project exists and what
 it deliberately does not build, `docs/cli-architecture.md` for how the
 CLI is put together, `docs/checkpoint-and-handoff.md` for the two state
 writers, `docs/process-list-and-cleanup.md` for process discovery and
 cleanup's safety model, `docs/context-efficiency.md` for the context-
-efficiency layer, and `.agent/HANDOFF.md` for current progress.
+efficiency layer, `docs/project-init.md` for `forgeops init`, and
+`.agent/HANDOFF.md` for current progress.
 
 ## CLAUDE.md vs. `.agent/` state files
 
@@ -78,9 +83,10 @@ forgeops handoff                             # write .agent/HANDOFF.md (derived 
 forgeops process-list                          # read-only: discover/classify processes associated with this repo
 forgeops cleanup                                 # dry-run by default: report cleanup candidates, act on none
 forgeops resume-context                            # read-only: compact, bounded-size summary for a new session
+forgeops init [PATH]                                  # bootstrap the minimum ForgeOps governance structure for a target project
 
 forgeops <command> --json        # structured JSON instead of human-readable text
-forgeops <command> --repo <path> # inspect a repository other than the current directory
+forgeops <command> --repo <path> # inspect a repository other than the current directory (init takes a positional PATH instead - see docs/project-init.md)
 python -m forgeops <command>     # equivalent to the forgeops console script
 
 forgeops test --targeted --plan     # show the plan, run nothing
@@ -89,12 +95,13 @@ forgeops test --full --plan            # same, for the complete suite instead of
 forgeops checkpoint --dry-run             # preview the state document, write nothing
 forgeops handoff --dry-run                  # preview the handoff markdown, write nothing
 forgeops cleanup --execute                    # actually attempt graceful termination of eligible ("managed") processes
+forgeops init --dry-run                         # preview what init would create/preserve/block, write nothing
 ```
 
-Every other command named in the long-term design (`init`, `worktree`,
-`agents`, `approvals`, `validate-config`, `install`, `uninstall`) is
-registered but not yet implemented — see `docs/phase2c-validation.md`
-for prior recommended-next-scope notes.
+Every other command named in the long-term design (`worktree`, `agents`,
+`approvals`, `validate-config`, `install`, `uninstall`) is registered
+but not yet implemented — see `docs/phase2c-validation.md` for prior
+recommended-next-scope notes.
 
 ## Layout
 

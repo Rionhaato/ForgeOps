@@ -417,3 +417,74 @@ is what `.claude/settings.json` actually wires
 `.claude/hooks/sessionend_handoff.py` to. Documented here since it's a
 deliberate deviation from the literal phrase in the checkpoint brief,
 not an oversight.
+
+## 2026-07-23 — `forgeops init` resolves its target directly, never by walking up for `.git`
+
+Every other ForgeOps command discovers its repository root via
+`resolve_repo_root` (walk upward from cwd/`--repo` looking for `.git`).
+`forgeops init` deliberately does not: its whole purpose is to safely
+handle a directory that isn't a git repository yet, and if it walked
+upward it could silently initialize a different (parent) repository
+than the one explicitly named on the command line - the opposite of
+"safe and deterministic." The target is exactly the given `PATH`
+argument, or cwd if omitted; a directory nested one level below an
+already-governed parent gets its own independent `.agent/` structure,
+verified by `test_does_not_traverse_into_parent_or_child_repository`.
+This is also why `init` takes a positional `PATH` instead of the
+`--repo <path>` flag every other command uses - see `docs/project-init.md`.
+
+## 2026-07-23 — `forgeops init` treats a malformed `CURRENT_STATE.json` as a blocking conflict, not a warning
+
+`forgeops checkpoint`/`handoff` treat an existing `.agent/CURRENT_STATE.json`
+with an unsupported/malformed `schema_version` as a `warning` and
+silently reset it to fresh narrative defaults (see the 2026-07-22 entry
+above) - the right choice for a command whose whole job is producing a
+fresh snapshot on every call. `forgeops init` reuses the same
+compatibility check but treats the identical condition as a blocking
+`conflict` instead, refusing to write anything. Deliberately more
+conservative: `init` is a first-time bootstrap operation a caller might
+run against a project with real, unusual pre-existing state, and
+silently discarding that state (even "for a good reason") is a worse
+failure mode for a command explicitly required to "never overwrite
+malformed or unknown `.agent` state." The two commands' differing
+defaults for the same underlying signal are intentional, not an
+inconsistency - documented explicitly in `docs/project-init.md` so a
+future reader doesn't try to "fix" one to match the other.
+
+## 2026-07-23 — `forgeops init` does not pre-create `.agent/runtime/`, `.agent/checkpoints/`, or `.agent/logs/`
+
+The checkpoint brief's own "preferred managed paths" list named all
+three, but also explicitly instructed against creating "empty
+speculative directories... unless the current runtime/state writers
+already require them." Checked: `forgeops.state.runtime_registry` (the
+only current writer that would ever use `.agent/runtime/`) already
+creates its own parent directory via `atomic_write_text` the moment it
+first writes a registry record; nothing in this repository references
+`.agent/checkpoints/` or `.agent/logs/` at all. Only `.agent` itself is
+pre-created (it doubles as a conflict-detection point - a plain file
+named `.agent` must block init). Chosen over creating all three "to
+match the brief's list literally," since empty, currently-unused
+directories are exactly the kind of speculative scaffolding the more
+specific instruction overrode. If a future command starts requiring one
+of these ahead of time, it should create it itself (mirroring how
+`runtime_registry` already behaves), not have `init` guess at a need
+that doesn't exist yet.
+
+## 2026-07-23 — TrendForge protection duplicated as a second, independent layer in `forgeops init` rather than unified with the PreToolUse hook
+
+`.claude/hooks/pretooluse_safety.py` already blocks any Claude Code tool
+call referencing the TrendForge path. `forgeops/core/paths.py` now also
+hardcodes `READONLY_REFERENCE_REPO` and
+`is_protected_reference_path()`, checked directly inside `run_init`
+before any filesystem existence check. Deliberately not unified into one
+shared source of truth: the hook protects *this Claude Code session's*
+tool calls; the CLI-level check protects `forgeops init` itself
+regardless of how or from where it's invoked (a future non-Claude-Code
+caller, a different agent harness, a CI job). Both independently
+hardcode the same literal path rather than reading it from project
+config, so neither a settings edit nor a `pyproject.toml` edit can
+silently disable either layer - defense in depth was chosen deliberately
+over DRY here. Verified in tests via a monkeypatched
+`READONLY_REFERENCE_REPO` pointed at a fake path under `tmp_path` - the
+real TrendForge checkout is never used as a test target, per standing
+instruction.

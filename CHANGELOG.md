@@ -6,6 +6,68 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Phase 2C — Process List and Cleanup
+- Implemented `forgeops process-list`: read-only, Windows-native
+  discovery (PowerShell/CIM `Win32_Process` + `netstat -ano` for
+  listening ports - no `psutil`, no package installed automatically) and
+  classification of processes possibly associated with the target
+  repository. Every process is classified as exactly one of `managed`,
+  `associated`, `uncertain`, `unrelated`, or `stale_record`
+  (`forgeops/detectors/process_association.py`) - a common executable
+  name (`python`, `node`, `npm`, `uvicorn`, `vite`, `git`, `powershell`,
+  `cmd`, ...) is never itself evidence of anything.
+- Implemented `forgeops cleanup`: conservative, defaults-to-dry-run.
+  Only `managed` processes (an exact `.agent/runtime/PROCESS_REGISTRY.json`
+  record match on PID, repository, and start time, with an allowed
+  category) are ever termination candidates - `associated` (heuristic
+  command-line evidence only) is never sufficient, no matter how much of
+  it accumulates. `--execute` revalidates PID identity and start time
+  immediately before acting, attempts graceful termination only
+  (`taskkill /PID`, never `/F`/force), waits a bounded time, and reports
+  failure rather than escalating if the process is still running. Stale
+  registry records (PID reused, or process no longer exists) can be
+  removed safely, still gated by the same dry-run/execute default.
+- New shared primitives: `forgeops/state/runtime_registry.py`
+  (`.agent/runtime/PROCESS_REGISTRY.json` load/save, atomic, generalizing
+  the PID/start-time tracking pattern proven in TrendForge's
+  `trendforge-launcher-common.ps1` - planned back in Phase 0's source
+  audit, see `docs/known-failures.md`), `forgeops/detectors/processes.py`
+  (OS process enumeration; documents that `Win32_Process` exposes no
+  native working-directory property, so `working_directory` is always
+  `None` on Windows today), `forgeops/detectors/process_association.py`
+  (the pure classification function).
+- **Real bug found and fixed during manual disposable-process
+  validation** (not caught by the original unit tests, which assumed the
+  wrong format): `Get-CimInstance`'s `ConvertTo-Json` renders a
+  `DateTime` property as the legacy .NET JSON-date form
+  (`/Date(<epoch-ms>)/`), not the raw WMI `CIM_DATETIME` string
+  originally assumed - `_parse_wmi_datetime()` now handles both, with a
+  regression test for each format.
+- **Real, honest validation finding, not a bug**: a live disposable test
+  process was registered and cleanup was run with `--execute` against
+  it - graceful `taskkill` (no `/F`) did not stop a plain console Python
+  process within the timeout on this machine, and cleanup correctly
+  reported failure without escalating, exactly as designed. No force-kill
+  path exists in this checkpoint by deliberate choice.
+- Command-line text is redacted **twice** (discovery layer and CLI
+  reporting layer) - a real gap where the second layer wasn't redacting
+  at all was caught by `test_sanitized_command_output` during
+  development.
+- 93 new tests (up from 380 to 473): WMI/CIM datetime parsing (both
+  formats) and netstat parsing, the full classification matrix (managed/
+  associated/uncertain/unrelated/stale_record, PID reuse, disallowed
+  categories, common-executable-name safety, spacey paths), the registry
+  load/save round-trip and schema handling, full CLI integration
+  coverage for both commands (dry-run default, explicit `--execute`,
+  graceful-termination success/timeout, inaccessible/already-exited
+  processes, secret sanitization, atomic registry updates,
+  INTERNAL_ERROR handling), and regression tests proving every existing
+  command is unchanged, `cleanup` never touches a repository other than
+  the one it's invoked against, and neither new command ever writes
+  outside its documented path.
+- New doc: `docs/process-list-and-cleanup.md`. Updates to
+  `docs/cli-architecture.md`, `docs/cli-exit-codes.md`, `README.md`.
+
 ### Phase 2C — Checkpoint and Handoff
 - Implemented `forgeops checkpoint`: writes a deterministic, atomic
   snapshot to `.agent/CURRENT_STATE.json` (the existing canonical

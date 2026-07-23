@@ -25,8 +25,10 @@ from pathlib import Path
 from forgeops.cli import audit as audit_cmd
 from forgeops.cli import changed as changed_cmd
 from forgeops.cli import checkpoint as checkpoint_cmd
+from forgeops.cli import cleanup as cleanup_cmd
 from forgeops.cli import doctor as doctor_cmd
 from forgeops.cli import handoff as handoff_cmd
+from forgeops.cli import process_list as process_list_cmd
 from forgeops.cli import release_check as release_check_cmd
 from forgeops.cli import status as status_cmd
 from forgeops.cli import test as test_cmd
@@ -39,7 +41,7 @@ from forgeops.security.redact import redact_text
 PHASE_2A_COMMANDS = ("doctor", "status", "audit")
 NOT_YET_IMPLEMENTED_COMMANDS = (
     "init",
-    "process-list", "cleanup", "worktree", "agents", "approvals",
+    "worktree", "agents", "approvals",
     "validate-config", "install", "uninstall",
 )
 
@@ -87,6 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_sub.add_argument("--json", action="store_true")
     handoff_sub.add_argument("--repo", default=None)
     handoff_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be written, write nothing")
+
+    process_list_sub = subparsers.add_parser("process-list", help="forgeops process-list")
+    process_list_sub.add_argument("--json", action="store_true")
+    process_list_sub.add_argument("--repo", default=None)
+
+    cleanup_sub = subparsers.add_parser("cleanup", help="forgeops cleanup")
+    cleanup_sub.add_argument("--json", action="store_true")
+    cleanup_sub.add_argument("--repo", default=None)
+    cleanup_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="report cleanup candidates, take no action (default behavior)")
+    cleanup_sub.add_argument("--execute", action="store_true", help="actually attempt graceful termination / stale-record removal for eligible candidates")
 
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
@@ -147,6 +159,12 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
         return checkpoint_cmd.run_checkpoint(args.repo, dry_run=args.dry_run)
     if args.command == "handoff":
         return handoff_cmd.run_handoff(args.repo, dry_run=args.dry_run)
+    if args.command == "process-list":
+        return process_list_cmd.run_process_list(args.repo)
+    if args.command == "cleanup":
+        # --dry-run wins if both flags are somehow given - default to safety.
+        execute = args.execute and not args.dry_run
+        return cleanup_cmd.run_cleanup(args.repo, execute=execute)
     # Resolved via getattr on the module, not a pre-bound reference, so
     # that monkeypatching e.g. forgeops.cli.doctor_cmd.run_doctor (the
     # normal way tests substitute behavior) actually takes effect - a
@@ -168,6 +186,10 @@ def _render_result(args: argparse.Namespace, result: CommandResult) -> str:
         return checkpoint_cmd.render_human(result)
     if args.command == "handoff":
         return handoff_cmd.render_human(result)
+    if args.command == "process-list":
+        return process_list_cmd.render_human(result)
+    if args.command == "cleanup":
+        return cleanup_cmd.render_human(result)
     module = _SIMPLE_MODULES[args.command]
     return module.render_human(result)
 
@@ -186,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dispatchable = args.command in _SIMPLE_MODULES or args.command in (
         "changed", "test", "release-check", "checkpoint", "handoff",
+        "process-list", "cleanup",
     )
     if not dispatchable:
         print(

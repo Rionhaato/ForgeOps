@@ -73,6 +73,17 @@ Per-command specifics:
   is not itself a warning for either command - like `status`, capturing
   the working-tree shape *is* the point, not a fault to flag. See
   `docs/checkpoint-and-handoff.md`.
+- **`process-list` / `cleanup`** (this checkpoint): `REPO_NOT_FOUND` (4) /
+  `COMMAND_EXECUTION_FAILURE` (5, git unavailable or a registry-write
+  failure) as above; otherwise `WARNINGS_PRESENT` (1) if there's a
+  process-discovery limitation (e.g. non-Windows, PowerShell/CIM
+  unavailable), a registry-schema warning, or (`cleanup` only) at least
+  one reported termination/stale-record candidate or action - including
+  a graceful termination that didn't stop the process within the bounded
+  wait (an honest, expected outcome since cleanup never escalates to
+  force-kill); otherwise `SUCCESS` (0). Neither command ever returns
+  `BLOCKED` - that code is reserved for `audit`/`release-check`'s secret
+  and dangerous-filename findings. See `docs/process-list-and-cleanup.md`.
 
 ## Stability guarantee
 

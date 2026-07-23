@@ -318,6 +318,115 @@ def test_handoff_dry_run_flag_reaches_run_handoff(git_repo, monkeypatch):
     assert captured_kwargs["dry_run"] is True
 
 
+def test_process_list_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in process-list")
+
+    monkeypatch.setattr("forgeops.cli.process_list_cmd.run_process_list", boom)
+    exit_code = main(["process-list", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in process-list" in captured.err
+
+
+def test_process_list_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in process-list")
+
+    monkeypatch.setattr("forgeops.cli.process_list_cmd.run_process_list", boom)
+    exit_code = main(["process-list", "--repo", str(git_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_process_list_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in process-list")
+
+    monkeypatch.setattr("forgeops.cli.process_list_cmd.run_process_list", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in process-list"):
+        main(["--debug", "process-list", "--repo", str(git_repo)])
+
+
+def test_cleanup_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in cleanup")
+
+    monkeypatch.setattr("forgeops.cli.cleanup_cmd.run_cleanup", boom)
+    exit_code = main(["cleanup", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in cleanup" in captured.err
+    # A crash must never leave a partial/corrupted registry behind.
+    assert not (git_repo / ".agent" / "runtime" / "PROCESS_REGISTRY.json").exists()
+
+
+def test_cleanup_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in cleanup")
+
+    monkeypatch.setattr("forgeops.cli.cleanup_cmd.run_cleanup", boom)
+    exit_code = main(["cleanup", "--repo", str(git_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_cleanup_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in cleanup")
+
+    monkeypatch.setattr("forgeops.cli.cleanup_cmd.run_cleanup", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in cleanup"):
+        main(["--debug", "cleanup", "--repo", str(git_repo)])
+
+
+def test_cleanup_execute_flag_reaches_run_cleanup(git_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_cleanup(repo_arg, execute=False):
+        captured_kwargs["execute"] = execute
+        from forgeops.cli.cleanup import run_cleanup as real
+        return real(repo_arg, write_log=False, execute=execute)
+
+    monkeypatch.setattr("forgeops.cli.cleanup_cmd.run_cleanup", fake_run_cleanup)
+    main(["cleanup", "--repo", str(git_repo), "--execute"])
+    assert captured_kwargs["execute"] is True
+
+
+def test_cleanup_dry_run_flag_overrides_execute_for_safety(git_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_cleanup(repo_arg, execute=False):
+        captured_kwargs["execute"] = execute
+        from forgeops.cli.cleanup import run_cleanup as real
+        return real(repo_arg, write_log=False, execute=execute)
+
+    monkeypatch.setattr("forgeops.cli.cleanup_cmd.run_cleanup", fake_run_cleanup)
+    main(["cleanup", "--repo", str(git_repo), "--execute", "--dry-run"])
+    assert captured_kwargs["execute"] is False
+
+
+def test_cleanup_default_is_dry_run(git_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_cleanup(repo_arg, execute=False):
+        captured_kwargs["execute"] = execute
+        from forgeops.cli.cleanup import run_cleanup as real
+        return real(repo_arg, write_log=False, execute=execute)
+
+    monkeypatch.setattr("forgeops.cli.cleanup_cmd.run_cleanup", fake_run_cleanup)
+    main(["cleanup", "--repo", str(git_repo)])
+    assert captured_kwargs["execute"] is False
+
+
 def test_test_command_requires_a_mode_flag(git_repo, capsys):
     exit_code = main(["test", "--repo", str(git_repo)])
     captured = capsys.readouterr()

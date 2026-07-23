@@ -21,13 +21,18 @@ handling, and hardening for the secret-scanner's allowlist marker. Phase
 2C added `forgeops test --full` (the complete supported suite, ignoring
 changed files), `forgeops release-check` (a read-only release-readiness
 gate aggregating doctor/audit/test --full into one ready/not-ready
-verdict), and `forgeops checkpoint`/`forgeops handoff` (deterministic,
+verdict), `forgeops checkpoint`/`forgeops handoff` (deterministic,
 atomic state writers for `.agent/CURRENT_STATE.json`/`.agent/HANDOFF.md`
-so another Claude Code or Codex session can resume safely). See
-`docs/architecture-decision.md` for why this project exists and what it
-deliberately does not build, `docs/cli-architecture.md` for how the CLI
-is put together, `docs/checkpoint-and-handoff.md` for the two state
-writers, and `.agent/HANDOFF.md` for current progress.
+so another Claude Code or Codex session can resume safely), and
+`forgeops process-list`/`forgeops cleanup` (read-only, Windows-native
+process discovery/classification, plus a conservative, dry-run-by-
+default cleanup for the narrow set of processes ForgeOps can prove it's
+responsible for via an atomic `.agent/runtime/PROCESS_REGISTRY.json`).
+See `docs/architecture-decision.md` for why this project exists and what
+it deliberately does not build, `docs/cli-architecture.md` for how the
+CLI is put together, `docs/checkpoint-and-handoff.md` for the two state
+writers, `docs/process-list-and-cleanup.md` for process discovery and
+cleanup's safety model, and `.agent/HANDOFF.md` for current progress.
 
 ## CLAUDE.md vs. `.agent/` state files
 
@@ -63,6 +68,8 @@ forgeops test --full                   # run the complete supported suite(s)
 forgeops release-check                   # read-only release-readiness gate
 forgeops checkpoint                        # write .agent/CURRENT_STATE.json
 forgeops handoff                             # write .agent/HANDOFF.md (derived from checkpoint data)
+forgeops process-list                          # read-only: discover/classify processes associated with this repo
+forgeops cleanup                                 # dry-run by default: report cleanup candidates, act on none
 
 forgeops <command> --json        # structured JSON instead of human-readable text
 forgeops <command> --repo <path> # inspect a repository other than the current directory
@@ -73,12 +80,13 @@ forgeops test --targeted --dry-run  # show exactly what would execute, run nothi
 forgeops test --full --plan            # same, for the complete suite instead of changed files
 forgeops checkpoint --dry-run             # preview the state document, write nothing
 forgeops handoff --dry-run                  # preview the handoff markdown, write nothing
+forgeops cleanup --execute                    # actually attempt graceful termination of eligible ("managed") processes
 ```
 
-Every other command named in the long-term design (`init`, `process-list`,
-`cleanup`, `worktree`, `agents`, `approvals`, `validate-config`, `install`,
-`uninstall`) is registered but not yet implemented — see
-`docs/phase2c-validation.md` for prior recommended-next-scope notes.
+Every other command named in the long-term design (`init`, `worktree`,
+`agents`, `approvals`, `validate-config`, `install`, `uninstall`) is
+registered but not yet implemented — see `docs/phase2c-validation.md`
+for prior recommended-next-scope notes.
 
 ## Layout
 

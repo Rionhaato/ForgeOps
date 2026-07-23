@@ -253,3 +253,81 @@ chance of updating the other; a future phase could add a regression test
 that fails if `CLAUDE.md`'s section 8 code fence and this constant tuple
 diverge, but that wasn't built now (out of scope for this bounded
 checkpoint) - noted here as a known gap, not hidden.
+
+## 2026-07-22 — cleanup_eligible requires an exact registry match; heuristic association is never sufficient
+
+`forgeops cleanup` will only ever attempt to terminate a process
+classified `managed` by `process_association.classify_process()` - an
+exact `.agent/runtime/PROCESS_REGISTRY.json` record match on PID,
+repository, and start time, with an allowed category. `associated`
+(heuristic: the command line, its own or its parent's, merely contains
+the repository path) is deliberately never cleanup-eligible, no matter
+how many separate pieces of heuristic evidence accumulate. Considered
+letting high-confidence `associated` processes (e.g. two independent
+matching signals) become eligible too, to make cleanup more useful
+without a registry populated yet - rejected: the mission's own
+instruction was explicit ("do not classify a process as managed solely
+because its executable name is common... use explicit evidence") and,
+more importantly, a command line containing a repository path proves
+much less than an actual PID+start-time-matched registry record does -
+it's exactly the kind of coincidental match that could catch an
+unrelated user's own editor session or terminal tab open in the same
+directory. `cleanup_eligible` is `False` on every `AssociationResult`
+except `managed`, enforced by construction, not by a runtime check
+elsewhere that could be bypassed.
+
+## 2026-07-22 — no force-kill path exists, by deliberate choice, and this was validated for real
+
+The mission's own instructions said implementing a force flag "is not
+required" and "prefer not to implement force termination." Taken
+literally: `forgeops cleanup --execute` only ever runs
+`taskkill /PID <pid>` (no `/F`), waits a bounded time, and reports
+failure - never escalating - if the process is still running. This was
+validated against a **real** disposable test process (a plain
+`python -c "import time; time.sleep(300)"` child, registered with a real
+PID + real start time under a disposable temp repository, never
+TrendForge or anything real): graceful `taskkill` did not stop it within
+the timeout on this machine, and cleanup correctly reported that failure
+without escalating. This is the intended, safe behavior, not a gap to
+patch - Windows console applications frequently don't respond to a
+non-forceful termination request the way GUI applications with a message
+loop can, and accepting "sometimes graceful termination just doesn't
+work" is the tradeoff for never force-killing anything ForgeOps didn't
+launch itself. The disposable test process was force-killed manually,
+outside of `forgeops cleanup`, purely as validation-session cleanup.
+
+## 2026-07-22 — a process whose command line can't be read is `unrelated`, not `uncertain`
+
+Real validation against the live ForgeOps development machine initially
+classified 137 of 300 scanned processes as `uncertain` - nearly all
+ordinary Windows system processes (`svchost.exe`, `csrss.exe`, ...)
+whose command line simply can't be read when running unelevated. This
+was technically "safe" (never wrongly treated as associated/managed) but
+made `process-list`'s output useless - burying any real signal in noise.
+Fixed by reserving `uncertain` for a *specific* reason to be cautious (a
+registry record that exists but doesn't fully check out - wrong
+repository, disallowed category) rather than "any process we couldn't
+positively rule out." A process with zero evidence either way,
+regardless of *why* there's no evidence, is `unrelated` and isn't
+reported - it was never going to be a cleanup candidate regardless, so
+omitting it from the report has no safety cost. Documented explicitly in
+`docs/process-list-and-cleanup.md` since it's a subtle distinction a
+future reader could easily get backwards.
+
+## 2026-07-22 — `Get-CimInstance`'s CreationDate is a .NET JSON date, not a raw WMI datetime string (real bug, caught by real validation)
+
+The original `_parse_wmi_datetime()` only recognized the raw WMI
+`CIM_DATETIME` string form (`20260722153045.123456-300`). Unit tests
+written against that same wrong assumption all passed - the bug was only
+caught when a **real** disposable test process's registry record showed
+`start_time_utc: None` despite the process genuinely existing, during
+the manual real-process cleanup validation. `Get-CimInstance` (the
+modern CIM cmdlet, used here instead of the older `Get-WmiObject`)
+auto-converts WMI's raw datetime into a .NET `DateTime`, and
+`ConvertTo-Json` renders *that* as the legacy `/Date(<epoch-ms>)/`
+convention. Fixed to parse both forms, with a regression test for each -
+this is exactly the kind of gap real dogfooding surfaces that a unit
+test written against an assumption, rather than a real command's real
+output, cannot catch on its own (consistent with the Phase 2A/2B lesson
+already recorded above: "real execution and disposable multi-stack repos
+remain mandatory, not just dogfooding").

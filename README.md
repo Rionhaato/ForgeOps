@@ -41,20 +41,26 @@ writes with rollback, TrendForge protection, and non-Git support - see
 create` followed (safe Git worktree inspection and bounded creation
 under a deterministic managed root, with `--dry-run`, conflict
 preflight, partial-failure reporting, and an atomic
-`.agent/runtime/WORKTREE_REGISTRY.json`). Most recently, `forgeops
-worktree remove` (confirmation-gated, eligibility/dirty/busy-checked
-removal of a ForgeOps-created worktree, with `--dry-run`, identity
-revalidation immediately before mutation, branch preservation by
-default, and opt-in non-force branch deletion via `--delete-branch` -
-see `docs/worktrees.md`).
+`.agent/runtime/WORKTREE_REGISTRY.json`), then `forgeops worktree
+remove` (confirmation-gated, eligibility/dirty/busy-checked removal of
+a ForgeOps-created worktree, with `--dry-run`, identity revalidation
+immediately before mutation, branch preservation by default, and
+opt-in non-force branch deletion via `--delete-branch` - see
+`docs/worktrees.md`). Most recently, a persistent, schema-controlled
+Task Specification Engine: `forgeops task create|show|list|validate|close`,
+storing task intent, scope, acceptance criteria, validation
+expectations, and final outcome under `.agent/tasks/`, outside
+conversational context - deterministic task IDs, secret-shaped-content
+rejection before any write, and a `task close` confirmation/atomicity
+model mirroring `worktree remove`'s own (see `docs/tasks.md`).
 See `docs/architecture-decision.md` for why this project exists and what
 it deliberately does not build, `docs/cli-architecture.md` for how the
 CLI is put together, `docs/checkpoint-and-handoff.md` for the two state
 writers, `docs/process-list-and-cleanup.md` for process discovery and
 cleanup's safety model, `docs/context-efficiency.md` for the context-
 efficiency layer, `docs/project-init.md` for `forgeops init`,
-`docs/worktrees.md` for `forgeops worktree`, and `.agent/HANDOFF.md` for
-current progress.
+`docs/worktrees.md` for `forgeops worktree`, `docs/tasks.md` for
+`forgeops task`, and `.agent/HANDOFF.md` for current progress.
 
 ## CLAUDE.md vs. `.agent/` state files
 
@@ -114,6 +120,15 @@ forgeops worktree remove NAME                                # confirmation-gate
 forgeops worktree remove NAME --dry-run                        # preview what would be removed, mutate nothing
 forgeops worktree remove NAME --confirm                          # actually remove the worktree; branch is preserved by default
 forgeops worktree remove NAME --delete-branch --confirm            # also delete the ForgeOps-owned branch via non-force `git branch -d`
+forgeops task create TITLE                                            # create a task (status: draft) with a minimal SPEC.md template
+forgeops task create TITLE --spec-file FILE --acceptance FILE           # supply a full spec and/or acceptance criteria instead of the template
+forgeops task create TITLE --dry-run                                      # preview the task ID/path, write nothing
+forgeops task show TASK_ID                                                  # read-only: objective, scope, acceptance criteria, status, ownership
+forgeops task list                                                            # read-only: concise rows for every task; --status STATUS filters
+forgeops task validate TASK_ID                                                  # read-only: blocking errors and warnings, never mutates or runs tests
+forgeops task close TASK_ID --result-file FILE                                    # confirmation-gated: preflight only, no mutation without --confirm
+forgeops task close TASK_ID --dry-run                                               # preview the planned completed/failed transition, mutate nothing
+forgeops task close TASK_ID --result-file FILE --confirm                              # actually close - completed (passed/waived) or failed validation
 ```
 
 Every other command named in the long-term design (`agents`,
@@ -121,7 +136,10 @@ Every other command named in the long-term design (`agents`,
 but not yet implemented — see `docs/phase2c-validation.md` for prior
 recommended-next-scope notes. `forgeops worktree` implements
 `list`/`create`/`remove` — no `prune`, no bulk/forced removal, no merge
-orchestration yet, see `docs/worktrees.md`.
+orchestration yet, see `docs/worktrees.md`. `forgeops task` implements
+`create`/`show`/`list`/`validate`/`close` — no task editing, reopening,
+deletion, agent/worktree assignment, or approvals workflow yet, see
+`docs/tasks.md`.
 
 ## Layout
 

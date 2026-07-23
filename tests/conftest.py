@@ -43,3 +43,25 @@ def bare_git_repo(tmp_path: Path) -> Path:
 def spacey_git_repo(tmp_path: Path) -> Path:
     """A clean git repo whose path contains spaces."""
     return init_git_repo(tmp_path / "a repo with spaces")
+
+
+def init_forgeops_project(repo: Path) -> Path:
+    """Run the real `forgeops init` against an existing git repo, so
+    `.agent/CURRENT_STATE.json` etc. exist - the precondition every task-
+    engine command requires ("an initialized ForgeOps project")."""
+    from forgeops.cli.init import run_init
+    result = run_init(str(repo), write_log=False)
+    assert result.exit_code == 0
+    return repo
+
+
+@pytest.fixture
+def initialized_repo(git_repo: Path) -> Path:
+    """A clean git repo that has also been through `forgeops init`."""
+    return init_forgeops_project(git_repo)
+
+
+@pytest.fixture
+def spacey_initialized_repo(spacey_git_repo: Path) -> Path:
+    """A clean git repo whose path contains spaces, also initialized."""
+    return init_forgeops_project(spacey_git_repo)

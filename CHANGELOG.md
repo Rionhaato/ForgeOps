@@ -6,6 +6,77 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Persistent Task Specifications
+- Implemented a persistent, schema-controlled Task Specification
+  Engine: `forgeops task create|show|list|validate|close`, storing task
+  intent, scope, acceptance criteria, validation expectations, and
+  final outcome under `.agent/tasks/`, outside conversational context.
+  Deliberately does not implement agent assignment, agent execution,
+  parallel task routing, automatic worktree creation, approvals,
+  merges, task editing, reopening, or deletion - see `docs/tasks.md`
+  "Explicit non-goals".
+- Managed structure: `.agent/tasks/TASK_INDEX.json` (atomic,
+  schema-versioned, concise summaries only - mirrors
+  `worktree_registry.py`'s shape/safety, including failing the whole
+  document closed on any single unreadable record) plus
+  `.agent/tasks/<task-id>/{TASK.json,SPEC.md,VALIDATION.json}` per task
+  (`RESULT.md` added only by a successful `task close`).
+- Task IDs are deterministic and monotonic (`task-0001`, `task-0002`,
+  ...) via `TASK_INDEX.json`'s own `next_task_number` counter - never
+  derived from a timestamp, never silently reused. A failed creation
+  attempt rolls back whatever it created in that call so the number is
+  safely retried; a leftover directory from a non-rolled-back failure
+  blocks the next attempt at that ID outright rather than being
+  overwritten.
+- `task create TITLE` (mutating, `--dry-run` supported) generates a
+  minimal SPEC.md template (Objective, In Scope, Out of Scope,
+  Constraints, Acceptance Criteria, Required Validation, Stop
+  Boundary - every section present, requiring later human completion,
+  never a large plan inferred from `TITLE`), or ingests `--spec-file`
+  verbatim and/or `--acceptance FILE` (text or JSON criteria, rejected
+  outright if it looks like an executable script). Every supplied file
+  is read-only, size-limited, and secret-scanned
+  (`forgeops.security.secret_scan.scan_text`) before ever being
+  persisted - a match blocks creation outright, never redacted-and-kept.
+- `task show`/`task list` are read-only. `show` reuses `task validate`'s
+  own structural check but only ever refuses on a task that cannot be
+  located at all - every other issue is a warning, never a block. `list`
+  reports concise per-task rows and detects (never repairs) stale index
+  entries and unindexed on-disk task directories, mirroring `worktree
+  list`'s own drift detection.
+- `task validate TASK_ID` (read-only) checks index/directory agreement,
+  TASK.json/VALIDATION.json schema, required SPEC.md headings,
+  ID/project-root consistency, whether the accepted checkpoint still
+  resolves in git (skipped entirely when git is unavailable),
+  status/approval-state validity, placeholder Acceptance
+  Criteria/Required Validation sections, path containment, duplicate
+  task IDs, and secret-shaped content in every managed artifact -
+  reported as blockers and warnings separately. Never runs project
+  tests, never executes a validation command, never mutates, never
+  assigns a worktree/agent, never changes status.
+- `VALIDATION.json` (created `not_run` by `task create`) is only ever
+  *defined and validated* by this checkpoint - nothing in it runs
+  automatically; a human/tool decides `passed`/`failed`/`waived`
+  (waived requiring a recorded `approval_reference`) by writing to it
+  directly before a task becomes close-eligible.
+- `task close TASK_ID --result-file FILE` (mutating, confirmation-gated
+  via `--confirm`, `--dry-run` supported) mirrors `worktree remove`'s
+  confirmation model exactly. Closes `completed` (passed/waived
+  validation) or `failed` (failed validation) - never reopens a
+  terminal task. Writes RESULT.md, then TASK.json, then
+  TASK_INDEX.json, in that order; a failure in the first two rolls back
+  what it can and reports `COMMAND_EXECUTION_FAILURE` with
+  `partial_state` and a manual recovery recommendation, while an index
+  write failure *after* the real closure succeeded is `WARNINGS_PRESENT`
+  - the same asymmetric-partial-failure pattern `worktree
+  create`/`worktree remove` already established. Never deletes the
+  task directory.
+- New shared gate (`forgeops/cli/task.py:_repo_level_block`), used by
+  all five commands: refuses the read-only reference repository, and
+  requires an already-initialized ForgeOps project
+  (`.agent/CURRENT_STATE.json` present and schema-valid) - the first
+  ForgeOps commands to require this precondition.
+
 ### Safe Worktree Removal
 - Implemented `forgeops worktree remove NAME` (mutating,
   confirmation-gated): safe removal of a ForgeOps-created worktree and,

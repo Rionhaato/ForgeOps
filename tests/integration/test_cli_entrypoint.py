@@ -92,6 +92,25 @@ def test_python_dash_m_forgeops_worktree_remove_real_execution(git_repo):
     assert not worktree_path.exists()
 
 
+def test_python_dash_m_forgeops_task_lifecycle_real_execution(git_repo):
+    init_result = _run_module(["init", str(git_repo)], cwd=git_repo)
+    assert init_result.returncode == 0
+
+    create_result = _run_module(["task", "create", "My Task", "--repo", str(git_repo)], cwd=git_repo)
+    assert create_result.returncode == 0
+    assert "forgeops task create" in create_result.stdout
+    task_dir = git_repo / ".agent" / "tasks" / "task-0001"
+    assert (task_dir / "TASK.json").is_file()
+
+    list_result = _run_module(["task", "list", "--repo", str(git_repo)], cwd=git_repo)
+    assert list_result.returncode == 0
+    assert "task-0001" in list_result.stdout
+
+    show_result = _run_module(["task", "show", "task-0001", "--repo", str(git_repo)], cwd=git_repo)
+    assert show_result.returncode in (0, 1)  # SUCCESS or WARNINGS_PRESENT (placeholder sections)
+    assert "task-0001" in show_result.stdout
+
+
 def test_python_dash_m_forgeops_invalid_repo_path_exit_code(tmp_path):
     result = _run_module(["status", "--repo", str(tmp_path / "nope")], cwd=tmp_path)
     assert result.returncode == 4  # REPO_NOT_FOUND

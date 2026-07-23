@@ -21,6 +21,7 @@ forgeops/
     resume_context.py           forgeops resume-context (read-only, bounded-size compact resume summary)
     init.py                      forgeops init [PATH] (safe, deterministic project bootstrap - see docs/project-init.md)
     worktree.py                   forgeops worktree list | create | remove (safe Git worktree inspection/creation/removal - see docs/worktrees.md)
+    task.py                       forgeops task create | show | list | validate | close (persistent Task Specification Engine - see docs/tasks.md)
   core/
     paths.py             repo-root discovery, path normalization, read-only reference repository protection
     git.py                read-only git-state inspection (status entries, renames, ahead/behind, ...)
@@ -50,6 +51,11 @@ forgeops/
     worktree_registry.py         .agent/runtime/WORKTREE_REGISTRY.json load/save (mirrors runtime_registry.py's shape/safety)
     worktree_create.py            pure preflight-plan builder and single mutating writer for `forgeops worktree create` (see docs/worktrees.md)
     worktree_remove.py            pure preflight-plan builder and single mutating apply step for `forgeops worktree remove` (see docs/worktrees.md)
+    task_registry.py               TASK_INDEX.json / TASK.json / VALIDATION.json schema, constants, atomic load/save (see docs/tasks.md)
+    task_spec.py                    SPEC.md/RESULT.md rendering/parsing, safe spec-file/acceptance-file/result-file ingestion
+    task_create.py                   pure preflight-plan builder and single mutating writer for `forgeops task create`
+    task_validate.py                  read-only structural/consistency check shared by `task validate` and `task close`'s own preflight
+    task_close.py                      pure preflight-plan builder and single mutating apply step for `forgeops task close`
   worktrees/
     naming.py                NAME validation, deterministic branch-name/managed-root/path derivation
     git_worktree.py            git worktree list/add plumbing - tolerant porcelain parsing, no shell interpolation
@@ -94,7 +100,21 @@ exception, and the first three-subcommand module) exposes
 dispatches on `result.command` (`"worktree-list"` / `"worktree-create"`
 / `"worktree-remove"`) - see docs/worktrees.md for the managed root,
 branch-naming rule, conflict model, registry, and removal
-eligibility/confirmation model this implements. `run_*` never touches `sys.argv`,
+eligibility/confirmation model this implements. `task.py` (the fourth
+mutating exception - `task create`/`task close` mutate, `task
+show`/`task list`/`task validate` don't - and the first five-subcommand
+module) exposes `run_task_create`, `run_task_show`, `run_task_list`,
+`run_task_validate`, and `run_task_close`, sharing one `render_human`
+dispatching on `result.command` (`"task-create"` / `"task-show"` /
+`"task-list"` / `"task-validate"` / `"task-close"`). All five share a
+single repo-level gate (`_repo_level_block`) that every other worktree/
+init command doesn't need: a protected-reference-repo check identical
+to the others, plus a new one - the target must already be an
+initialized ForgeOps project (`.agent/CURRENT_STATE.json` present and
+schema-valid) - since the Task Specification Engine has nowhere safe to
+persist state otherwise. See `docs/tasks.md` for the task directory
+contract, ID generation, lifecycle, validation-artifact model, and
+closure's confirmation/atomicity model. `run_*` never touches `sys.argv`,
 `print`, or `sys.exit` — it's a pure function over its arguments, which is
 what makes it directly unit-testable (see `tests/integration/test_cli_*.py`)
 without spawning a subprocess. `main()` in `forgeops/cli/__init__.py` is
@@ -230,13 +250,16 @@ Only a genuinely unexpected exception (a real bug) is caught here:
   and produces a clean error) but not implemented — invoking any of them
   prints "not yet implemented" to stderr and exits 1. `forgeops test`
   without `--targeted` or `--full` behaves the same way. `checkpoint`,
-  `handoff`, `process-list`, `cleanup`, `init`, and `worktree list`/
-  `worktree create`/`worktree remove` are now implemented (see
+  `handoff`, `process-list`, `cleanup`, `init`, `worktree list`/
+  `worktree create`/`worktree remove`, and `task create`/`task show`/
+  `task list`/`task validate`/`task close` are now implemented (see
   `docs/checkpoint-and-handoff.md`, `docs/process-list-and-cleanup.md`,
-  `docs/project-init.md`, `docs/worktrees.md`). `worktree prune`, bulk/
-  forced removal, merge orchestration, and agent assignment remain
-  unimplemented - see `docs/worktrees.md` "Explicit non-goals". See
-  `docs/phase2c-validation.md` for prior recommended-next-scope notes.
+  `docs/project-init.md`, `docs/worktrees.md`, `docs/tasks.md`).
+  `worktree prune`, bulk/forced removal, merge orchestration, agent
+  assignment/execution, parallel task routing, and an approvals
+  workflow all remain unimplemented - see `docs/worktrees.md` and
+  `docs/tasks.md` "Explicit non-goals". See `docs/phase2c-validation.md`
+  for prior recommended-next-scope notes.
 - Process discovery (`forgeops/detectors/processes.py`) is Windows-only
   today - `forgeops process-list`/`forgeops cleanup` report a clear
   `WARNINGS_PRESENT` limitation and an empty process list on other

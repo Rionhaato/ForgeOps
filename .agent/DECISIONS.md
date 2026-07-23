@@ -559,3 +559,45 @@ rather than a separate flag, and is restricted to the `forgeops/<name>`
 namespace with a TOCTOU tip-commit recheck immediately before the
 actual (always non-force) `git branch -d` call - see `docs/worktrees.md`
 "Branch deletion (opt-in)" for the full eligibility list.
+
+## 2026-07-23 — Task Specification Engine: `BLOCKED` reused for "task not found", `task validate`'s blockers stay non-fatal for `task show`, and a single shared repo-level gate replaces per-command duplication
+
+Three deliberate choices made building `forgeops task create|show|list|validate|close`:
+
+1. `task show`/`task validate` both return `BLOCKED` (2) when the
+   requested task ID cannot be located at all (invalid ID format, or no
+   directory and no index entry) - not a new exit code. `exit_codes.py`
+   already documents `BLOCKED` generically as "a blocking safety
+   finding was reported", and `forgeops audit` (itself read-only)
+   already established that `BLOCKED` isn't reserved for mutating
+   commands. Introducing a new code for "couldn't find the named
+   resource" would violate this repo's own stability guarantee
+   (`docs/cli-exit-codes.md`: "new distinction... expressed as a new
+   checks[]/data field, not a new exit code").
+2. `forgeops/state/task_validate.py:validate_task` classifies every
+   issue as a `blocker` or a `warning` - but only `task validate` (and
+   `task close`'s own preflight, which reuses the same function) treats
+   a `blocker` as something that actually refuses anything. `task show`
+   surfaces every issue (blocker or warning) as a non-fatal warning
+   check and only ever hard-refuses on "not found" - `show` is for
+   *seeing* problems (including a fresh `draft` task's expected-empty
+   Acceptance Criteria), `validate`/`close` are where the same finding
+   actually blocks something. Reusing one classification function for
+   both, with the caller deciding what to do with `blocker` severity,
+   avoided a second, parallel issue-classification implementation.
+3. All five task commands share one gate,
+   `forgeops/cli/task.py:_repo_level_block` (protected reference
+   repository, then "is this an initialized ForgeOps project" via
+   `forgeops.state.schema.check_current_state`) - checked once, before
+   any command-specific logic runs, rather than five separate
+   near-duplicate checks. `forgeops task create`'s own plan builder
+   (`forgeops/state/task_create.py:build_task_create_plan`) *also*
+   contains its own copy of both checks internally, purely for direct
+   unit-testability and to mirror `worktree_create.py`'s established
+   precedent of defense-in-depth duplication - in the real CLI flow
+   `_repo_level_block` always intercepts first, so that internal copy
+   is normally dead code, exercised only by tests that call
+   `build_task_create_plan` directly.
+
+See `docs/tasks.md` for the full command/exit-code/lifecycle contract
+this codifies.

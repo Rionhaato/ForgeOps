@@ -695,3 +695,116 @@ def test_test_command_requires_a_mode_flag(git_repo, capsys):
 def test_test_command_rejects_both_mode_flags_at_once(git_repo):
     with pytest.raises(SystemExit):
         main(["test", "--targeted", "--full", "--repo", str(git_repo)])
+
+
+def test_task_create_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task create")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_create", boom)
+    exit_code = main(["task", "create", "My Task", "--repo", str(initialized_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in task create" in captured.err
+    # A crash before any write must never leave a partial task directory behind.
+    assert not (initialized_repo / ".agent" / "tasks" / "task-0001").exists()
+
+
+def test_task_create_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task create")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_create", boom)
+    exit_code = main(["task", "create", "My Task", "--repo", str(initialized_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_task_create_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task create")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_create", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task create"):
+        main(["--debug", "task", "create", "My Task", "--repo", str(initialized_repo)])
+
+
+def test_task_create_dry_run_flag_reaches_run_task_create(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_task_create(title, repo_arg, dry_run=False, spec_file=None, acceptance_file=None):
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.task import run_task_create as real
+        return real(title, repo_arg, write_log=False, dry_run=dry_run, spec_file=spec_file, acceptance_file=acceptance_file)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_create", fake_run_task_create)
+    main(["task", "create", "My Task", "--repo", str(initialized_repo), "--dry-run"])
+    assert captured_kwargs["dry_run"] is True
+
+
+def test_task_close_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task close")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_close", boom)
+    exit_code = main(["task", "close", "task-0001", "--repo", str(initialized_repo), "--confirm"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in task close" in captured.err
+
+
+def test_task_close_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task close")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_close", boom)
+    exit_code = main(["task", "close", "task-0001", "--repo", str(initialized_repo), "--confirm", "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+
+
+def test_task_close_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task close")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_close", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task close"):
+        main(["--debug", "task", "close", "task-0001", "--repo", str(initialized_repo), "--confirm"])
+
+
+def test_task_close_confirm_and_dry_run_flags_reach_run_task_close(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_task_close(task_id, repo_arg, dry_run=False, confirm=False, result_file=None):
+        captured_kwargs["confirm"] = confirm
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.task import run_task_close as real
+        return real(task_id, repo_arg, write_log=False, dry_run=dry_run, confirm=confirm, result_file=result_file)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_close", fake_run_task_close)
+    main(["task", "close", "task-0001", "--repo", str(initialized_repo), "--confirm"])
+    assert captured_kwargs["confirm"] is True
+    assert captured_kwargs["dry_run"] is False
+
+
+def test_task_show_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task show")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_show", boom)
+    exit_code = main(["task", "show", "task-0001", "--repo", str(initialized_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "simulated internal bug in task show" in captured.err
+
+
+def test_task_command_requires_a_subcommand(initialized_repo):
+    with pytest.raises(SystemExit):
+        main(["task", "--repo", str(initialized_repo)])

@@ -33,6 +33,7 @@ from forgeops.cli import process_list as process_list_cmd
 from forgeops.cli import release_check as release_check_cmd
 from forgeops.cli import resume_context as resume_context_cmd
 from forgeops.cli import status as status_cmd
+from forgeops.cli import task as task_cmd
 from forgeops.cli import test as test_cmd
 from forgeops.cli import worktree as worktree_cmd
 from forgeops.core import exit_codes
@@ -137,6 +138,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="also delete the ForgeOps-owned branch via a normal, non-force `git branch -d` (requires --confirm)",
     )
 
+    task_sub = subparsers.add_parser("task", help="forgeops task create | show | list | validate | close")
+    task_subparsers = task_sub.add_subparsers(dest="task_command", required=True)
+
+    task_create_sub = task_subparsers.add_parser("create", help="forgeops task create TITLE")
+    task_create_sub.add_argument("title", help="short human-readable task title")
+    task_create_sub.add_argument("--repo", default=None)
+    task_create_sub.add_argument("--json", action="store_true")
+    task_create_sub.add_argument("--spec-file", dest="spec_file", default=None, help="path to a local file whose content becomes SPEC.md verbatim")
+    task_create_sub.add_argument("--acceptance", dest="acceptance_file", default=None, help="path to a local text/JSON file of acceptance criteria")
+    task_create_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be created, write nothing")
+
+    task_show_sub = task_subparsers.add_parser("show", help="forgeops task show TASK_ID")
+    task_show_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_show_sub.add_argument("--repo", default=None)
+    task_show_sub.add_argument("--json", action="store_true")
+
+    task_list_sub = task_subparsers.add_parser("list", help="forgeops task list")
+    task_list_sub.add_argument("--repo", default=None)
+    task_list_sub.add_argument("--json", action="store_true")
+    task_list_sub.add_argument("--status", dest="status_filter", default=None, help="only show tasks with this exact status")
+
+    task_validate_sub = task_subparsers.add_parser("validate", help="forgeops task validate TASK_ID")
+    task_validate_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_validate_sub.add_argument("--repo", default=None)
+    task_validate_sub.add_argument("--json", action="store_true")
+
+    task_close_sub = task_subparsers.add_parser("close", help="forgeops task close TASK_ID")
+    task_close_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_close_sub.add_argument("--repo", default=None)
+    task_close_sub.add_argument("--json", action="store_true")
+    task_close_sub.add_argument("--result-file", dest="result_file", default=None, help="path to a local file whose content becomes RESULT.md verbatim")
+    task_close_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show the planned state transition, mutate nothing")
+    task_close_sub.add_argument("--confirm", action="store_true", help="actually perform the closure (required unless --dry-run)")
+
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
         sub.add_argument("--json", action="store_true")
@@ -216,6 +251,21 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
         return worktree_cmd.run_worktree_create(
             args.name, args.repo, dry_run=args.dry_run, branch=args.branch, base=args.base,
         )
+    if args.command == "task":
+        if args.task_command == "create":
+            return task_cmd.run_task_create(
+                args.title, args.repo, dry_run=args.dry_run,
+                spec_file=args.spec_file, acceptance_file=args.acceptance_file,
+            )
+        if args.task_command == "show":
+            return task_cmd.run_task_show(args.task_id, args.repo)
+        if args.task_command == "list":
+            return task_cmd.run_task_list(args.repo, status_filter=args.status_filter)
+        if args.task_command == "validate":
+            return task_cmd.run_task_validate(args.task_id, args.repo)
+        return task_cmd.run_task_close(
+            args.task_id, args.repo, dry_run=args.dry_run, confirm=args.confirm, result_file=args.result_file,
+        )
     # Resolved via getattr on the module, not a pre-bound reference, so
     # that monkeypatching e.g. forgeops.cli.doctor_cmd.run_doctor (the
     # normal way tests substitute behavior) actually takes effect - a
@@ -247,6 +297,8 @@ def _render_result(args: argparse.Namespace, result: CommandResult) -> str:
         return init_cmd.render_human(result)
     if args.command == "worktree":
         return worktree_cmd.render_human(result)
+    if args.command == "task":
+        return task_cmd.render_human(result)
     module = _SIMPLE_MODULES[args.command]
     return module.render_human(result)
 
@@ -265,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dispatchable = args.command in _SIMPLE_MODULES or args.command in (
         "changed", "test", "release-check", "checkpoint", "handoff",
-        "process-list", "cleanup", "resume-context", "init", "worktree",
+        "process-list", "cleanup", "resume-context", "init", "worktree", "task",
     )
     if not dispatchable:
         print(

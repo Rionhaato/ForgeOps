@@ -163,3 +163,21 @@ def add_worktree(repo_root: Path, worktree_path: Path, branch: str, base_commit:
     passed through a shell. Callers must have already verified `branch`
     does not exist and `base_commit` resolves to a real commit."""
     return _git(repo_root, "worktree", "add", "-b", branch, str(worktree_path), base_commit, timeout=60.0)
+
+
+def remove_worktree(repo_root: Path, worktree_path: Path) -> ProcResult:
+    """`git worktree remove <worktree_path>` - never `--force`. Git
+    itself refuses when the worktree has modified or untracked files, or
+    is locked, which is a second, independent safety layer beyond this
+    package's own preflight checks (`forgeops.state.worktree_remove`).
+    Callers must have already verified the worktree is not the primary
+    checkout and is a registered, identity-consistent ForgeOps worktree."""
+    return _git(repo_root, "worktree", "remove", str(worktree_path), timeout=60.0)
+
+
+def delete_branch_safe(repo_root: Path, branch: str) -> ProcResult:
+    """`git branch -d <branch>` - normal, non-force local branch deletion
+    only. Git itself refuses when the branch is not fully merged;
+    callers must never escalate to `-D` on that refusal, and this
+    function never accepts a force flag."""
+    return _git(repo_root, "branch", "-d", branch)

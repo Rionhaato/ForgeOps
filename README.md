@@ -37,11 +37,16 @@ Claude Code hooks, and a read-only Superpowers compatibility record (see
 (safe, deterministic bootstrap of the minimum ForgeOps governance
 structure for a target project - ownership/conflict detection, atomic
 writes with rollback, TrendForge protection, and non-Git support - see
-`docs/project-init.md`). Most recently, `forgeops worktree list`/
-`forgeops worktree create` (safe Git worktree inspection and bounded
-creation under a deterministic managed root, with `--dry-run`,
-conflict preflight, partial-failure reporting, and an atomic
-`.agent/runtime/WORKTREE_REGISTRY.json` - see `docs/worktrees.md`).
+`docs/project-init.md`). `forgeops worktree list`/`forgeops worktree
+create` followed (safe Git worktree inspection and bounded creation
+under a deterministic managed root, with `--dry-run`, conflict
+preflight, partial-failure reporting, and an atomic
+`.agent/runtime/WORKTREE_REGISTRY.json`). Most recently, `forgeops
+worktree remove` (confirmation-gated, eligibility/dirty/busy-checked
+removal of a ForgeOps-created worktree, with `--dry-run`, identity
+revalidation immediately before mutation, branch preservation by
+default, and opt-in non-force branch deletion via `--delete-branch` -
+see `docs/worktrees.md`).
 See `docs/architecture-decision.md` for why this project exists and what
 it deliberately does not build, `docs/cli-architecture.md` for how the
 CLI is put together, `docs/checkpoint-and-handoff.md` for the two state
@@ -105,13 +110,17 @@ forgeops worktree list                              # read-only: repository root
 forgeops worktree create NAME                          # create an isolated worktree + new branch under the managed root
 forgeops worktree create NAME --dry-run                    # preview branch/path/conflicts, create nothing
 forgeops worktree create NAME --branch B --base REF            # explicit branch name / base ref instead of the derived defaults
+forgeops worktree remove NAME                                # confirmation-gated: preflight only, no mutation without --confirm
+forgeops worktree remove NAME --dry-run                        # preview what would be removed, mutate nothing
+forgeops worktree remove NAME --confirm                          # actually remove the worktree; branch is preserved by default
+forgeops worktree remove NAME --delete-branch --confirm            # also delete the ForgeOps-owned branch via non-force `git branch -d`
 ```
 
 Every other command named in the long-term design (`agents`,
 `approvals`, `validate-config`, `install`, `uninstall`) is registered
 but not yet implemented — see `docs/phase2c-validation.md` for prior
-recommended-next-scope notes. `forgeops worktree` implements only
-`list`/`create` in this checkpoint — no `remove`/`prune`/merge
+recommended-next-scope notes. `forgeops worktree` implements
+`list`/`create`/`remove` — no `prune`, no bulk/forced removal, no merge
 orchestration yet, see `docs/worktrees.md`.
 
 ## Layout

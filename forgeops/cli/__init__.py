@@ -111,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_sub.add_argument("--json", action="store_true")
     init_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be created/preserved/blocked, write nothing")
 
-    worktree_sub = subparsers.add_parser("worktree", help="forgeops worktree list | create")
+    worktree_sub = subparsers.add_parser("worktree", help="forgeops worktree list | create | remove")
     worktree_subparsers = worktree_sub.add_subparsers(dest="worktree_command", required=True)
 
     worktree_list_sub = worktree_subparsers.add_parser("list", help="forgeops worktree list")
@@ -125,6 +125,17 @@ def build_parser() -> argparse.ArgumentParser:
     worktree_create_sub.add_argument("--branch", default=None, help="branch to create (default: forgeops/<name>)")
     worktree_create_sub.add_argument("--base", default=None, help="base ref to create the worktree from (default: HEAD)")
     worktree_create_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be created, write/mutate nothing")
+
+    worktree_remove_sub = worktree_subparsers.add_parser("remove", help="forgeops worktree remove NAME")
+    worktree_remove_sub.add_argument("name", help="worktree name (must match an active ForgeOps registry entry)")
+    worktree_remove_sub.add_argument("--repo", default=None)
+    worktree_remove_sub.add_argument("--json", action="store_true")
+    worktree_remove_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be removed, mutate nothing")
+    worktree_remove_sub.add_argument("--confirm", action="store_true", help="actually perform the removal (required unless --dry-run)")
+    worktree_remove_sub.add_argument(
+        "--delete-branch", dest="delete_branch", action="store_true",
+        help="also delete the ForgeOps-owned branch via a normal, non-force `git branch -d` (requires --confirm)",
+    )
 
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
@@ -198,6 +209,10 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
     if args.command == "worktree":
         if args.worktree_command == "list":
             return worktree_cmd.run_worktree_list(args.repo)
+        if args.worktree_command == "remove":
+            return worktree_cmd.run_worktree_remove(
+                args.name, args.repo, dry_run=args.dry_run, confirm=args.confirm, delete_branch=args.delete_branch,
+            )
         return worktree_cmd.run_worktree_create(
             args.name, args.repo, dry_run=args.dry_run, branch=args.branch, base=args.base,
         )

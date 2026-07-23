@@ -623,6 +623,68 @@ def test_worktree_create_branch_and_base_flags_reach_run_worktree_create(git_rep
     assert captured_kwargs["base"] == "HEAD"
 
 
+def test_worktree_remove_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in worktree remove")
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_remove", boom)
+    exit_code = main(["worktree", "remove", "demo", "--repo", str(git_repo), "--confirm"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in worktree remove" in captured.err
+
+
+def test_worktree_remove_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in worktree remove")
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_remove", boom)
+    exit_code = main(["worktree", "remove", "demo", "--repo", str(git_repo), "--confirm", "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_worktree_remove_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in worktree remove")
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_remove", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in worktree remove"):
+        main(["--debug", "worktree", "remove", "demo", "--repo", str(git_repo), "--confirm"])
+
+
+def test_worktree_remove_dry_run_flag_reaches_run_worktree_remove(git_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_worktree_remove(name_arg, repo_arg, dry_run=False, confirm=False, delete_branch=False):
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.worktree import run_worktree_remove as real
+        return real(name_arg, repo_arg, write_log=False, dry_run=dry_run, confirm=confirm, delete_branch=delete_branch)
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_remove", fake_run_worktree_remove)
+    main(["worktree", "remove", "demo", "--repo", str(git_repo), "--dry-run"])
+    assert captured_kwargs["dry_run"] is True
+
+
+def test_worktree_remove_confirm_and_delete_branch_flags_reach_run_worktree_remove(git_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_worktree_remove(name_arg, repo_arg, dry_run=False, confirm=False, delete_branch=False):
+        captured_kwargs["confirm"] = confirm
+        captured_kwargs["delete_branch"] = delete_branch
+        from forgeops.cli.worktree import run_worktree_remove as real
+        return real(name_arg, repo_arg, write_log=False, dry_run=dry_run, confirm=confirm, delete_branch=delete_branch)
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_remove", fake_run_worktree_remove)
+    main(["worktree", "remove", "demo", "--repo", str(git_repo), "--confirm", "--delete-branch"])
+    assert captured_kwargs["confirm"] is True
+    assert captured_kwargs["delete_branch"] is True
+
+
 def test_test_command_requires_a_mode_flag(git_repo, capsys):
     exit_code = main(["test", "--repo", str(git_repo)])
     captured = capsys.readouterr()

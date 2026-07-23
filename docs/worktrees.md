@@ -1,9 +1,10 @@
-# Git Worktrees (`forgeops worktree list` / `forgeops worktree create`)
+# Git Worktrees (`forgeops worktree list` / `create` / `remove`)
 
 A safe foundation for isolated parallel work: read-only inspection of a
-repository's Git worktrees, and bounded, conflict-checked creation of a
-new one. This checkpoint deliberately implements only these two
-commands - see "Explicit non-goals" below.
+repository's Git worktrees, bounded conflict-checked creation of a new
+one, and confirmation-gated, eligibility-checked removal of a
+ForgeOps-created one (and, optionally, its ForgeOps-owned branch). See
+"Explicit non-goals" below for what is still deliberately out of scope.
 
 ## Commands
 
@@ -16,6 +17,12 @@ forgeops worktree create NAME [--repo PATH] --branch BRANCH
 forgeops worktree create NAME [--repo PATH] --base REF
 forgeops worktree create NAME [--repo PATH] --dry-run
 forgeops worktree create NAME [--repo PATH] --json
+
+forgeops worktree remove NAME [--repo PATH]
+forgeops worktree remove NAME [--repo PATH] --dry-run
+forgeops worktree remove NAME [--repo PATH] --confirm
+forgeops worktree remove NAME [--repo PATH] --delete-branch --confirm
+forgeops worktree remove NAME [--repo PATH] --json
 ```
 
 `forgeops worktree` with no subcommand is a plain argparse usage error
@@ -177,9 +184,169 @@ recognize bare repositories was out of scope for this checkpoint -
 every other command reuses it unmodified, and altering it has
 blast radius beyond worktrees.
 
-## Explicit non-goals (this checkpoint)
+## Worktree removal (`forgeops worktree remove`)
 
-No `worktree remove`, no `worktree prune`, no branch deletion, no merge
+Confirmation-gated by design - removal mutates the filesystem, Git's
+worktree registration, and the ForgeOps registry, so it never runs
+without an explicit signal:
+
+- with neither `--dry-run` nor `--confirm`: runs the full preflight and
+  reports what would be removed, but makes no mutation and returns
+  `BLOCKED` (2) with `data.action == "confirmation_required"`;
+- `--dry-run`: identical preflight, never requires `--confirm`, never
+  mutates, and returns the same exit code a confirmed run would (`SUCCESS`
+  if the plan is clean, `BLOCKED` if the plan has a conflict);
+- `--confirm`: performs the real, single mutating removal.
+
+No interactive confirmation prompt exists anywhere - the command stays
+deterministic and automation-safe.
+
+### Eligibility (preflight)
+
+`forgeops/state/worktree_remove.py:build_worktree_remove_plan` is a
+read-only function - shared by `--dry-run`, the missing-`--confirm`
+response, and a real run - that collects every conflict found (not just
+the first). A worktree is only ever removed when **all** of the
+following hold; any violation adds a conflict and blocks the whole
+operation:
+
+- NAME is valid (`invalid-name` otherwise - rejects absolute paths and
+  traversal sequences the same way `worktree create` does);
+- an **active** record for NAME exists in
+  `.agent/runtime/WORKTREE_REGISTRY.json` (`not-registered` otherwise -
+  this is also what refuses a Git-only worktree that was never
+  registered by ForgeOps);
+- the registry is schema-valid (`registry-malformed` otherwise, fails
+  closed);
+- exactly one active record matches the name/path (`duplicate-registry-entry`
+  otherwise - an ambiguous registry is never guessed at);
+- the record's path matches the deterministic path for NAME and resolves
+  beneath the managed root (`registry-path-mismatch` / `outside-managed-root`
+  otherwise);
+- it is not (or beneath) the read-only reference repository
+  (`protected-reference-repo`);
+- it is not owned by a task or agent (`active-task-ownership` /
+  `active-agent-ownership` - always false today since no checkpoint yet
+  populates these fields, but checked defensively for when one does);
+- Git still lists it as a worktree (`stale-registry-entry` otherwise -
+  the registry is never trusted alone);
+- it is not the primary checkout (`primary-checkout`);
+- Git's current branch for the worktree matches the registry's recorded
+  branch (`identity-mismatch` - this is what refuses a worktree someone
+  manually detached or re-checked-out since it was created);
+- it is not locked (`worktree-locked`);
+- it has no uncommitted changes - staged, modified, or untracked
+  (`dirty-worktree`, via `forgeops.core.git.get_status`);
+- no Git operation is in progress - merge, rebase, cherry-pick, revert,
+  bisect (`git-operation-in-progress`, via `forgeops.core.git.get_operation_state`);
+- no live process is registered (in `.agent/runtime/PROCESS_REGISTRY.json`)
+  against this exact worktree path (`active-managed-process` - only
+  checked, and only pays the OS process-enumeration cost, when a
+  registry record's `repository_root` already matches the worktree path;
+  `working_directory` is always `None` on Windows - see
+  `forgeops/detectors/processes.py` - so an exact registry match is the
+  only evidence this checkpoint trusts).
+
+Never terminates a process, stashes, commits, resets, or cleans files -
+a dirty or busy worktree is reported with a manual-recovery message and
+left completely untouched.
+
+### Removal mechanics
+
+For a clean, eligible, confirmed worktree,
+`forgeops/state/worktree_remove.py:apply_worktree_remove`:
+
+1. Revalidates identity (still Git-listed, branch still matches)
+   immediately before mutating - closing the gap between preflight and
+   this call (compare-before-write, reduces TOCTOU risk).
+2. Runs `git worktree remove <path>` - **never** `--force`. Git itself
+   independently refuses a dirty or locked worktree, a second safety
+   layer beyond this package's own preflight.
+3. Verifies Git no longer lists the path and the directory no longer
+   exists. Only if *both* hold is the removal `ok`; if either doesn't
+   (a form of partial failure - see below), nothing further is done.
+4. Only then marks the record `removed` (`STATUS_REMOVED` in
+   `forgeops/state/worktree_registry.py`) via an atomic write -
+   the record is preserved as concise removal/lifecycle history rather
+   than deleted or given a new schema field. A failed `git worktree
+   remove` never touches the registry at all.
+5. If `--delete-branch` was requested and the branch remained eligible
+   (see below), attempts the branch deletion.
+
+Never uses `git worktree remove --force`, `git worktree prune`, or a
+recursive filesystem delete as the removal mechanism.
+
+### Partial-failure reporting
+
+Every partial state is reported explicitly, never silently upgraded to
+success and never automatically force-cleaned:
+
+- `git worktree remove` itself fails: nothing changes, `COMMAND_EXECUTION_FAILURE`
+  (5), registry untouched.
+- `git worktree remove` reports success but Git still lists the path, or
+  the directory still exists on disk: reported as a partial failure
+  (`COMMAND_EXECUTION_FAILURE`), registry untouched (only a fully
+  verified removal is ever reflected in the registry).
+- Identity changed between preflight and apply (e.g. someone detached
+  HEAD in the worktree in between): refused before any mutation is
+  attempted, `COMMAND_EXECUTION_FAILURE`.
+- Worktree removed but the registry write itself fails (disk full,
+  permission denied): `WARNINGS_PRESENT` (1) - the destructive action
+  genuinely completed; only the bookkeeping lagged, mirroring how
+  `worktree create` handles the same situation.
+- Worktree removed but branch deletion was requested and refused (not
+  fully merged, or became ineligible - see below): `WARNINGS_PRESENT`,
+  `data.action` still `removed_worktree`, branch left intact.
+
+Every partial-failure response includes `data.partial_state` and a
+`data.manual_recovery_recommendation` - never a full success claim.
+
+### Branch deletion (opt-in)
+
+By default the branch is **preserved** - only the worktree and its
+active registry entry are removed. Deletion happens only with
+`--delete-branch --confirm` together, and only when every condition
+holds (checked by `BranchDeletePrecheck` at preflight, revalidated
+immediately before the actual `git branch -d` call):
+
+- the branch is in the ForgeOps-owned namespace, `forgeops/<name>` (a
+  worktree created with an explicit `--branch` outside that namespace
+  is never deleted);
+- it matches the registry record exactly;
+- it exists locally and is not checked out in any other worktree;
+- its tip commit still matches the tip captured at preflight time (a
+  TOCTOU guard - if the branch moved in between, deletion is skipped,
+  never attempted against a moved target).
+
+Deletion itself is always `git branch -d` (`forgeops/worktrees/git_worktree.py:delete_branch_safe`)
+- **never** `-D`, and never a remote deletion. If the branch is not
+  fully merged, Git's own refusal is surfaced as-is: the branch is left
+  intact, the worktree removal (already completed) is still reported,
+  and the overall result is `WARNINGS_PRESENT`. Ineligibility (wrong
+  namespace, checked out elsewhere, moved tip) is reported the same way
+  - never escalated, never forced.
+
+### Exit codes (`worktree remove`)
+
+- `REPO_NOT_FOUND` (4) / `COMMAND_EXECUTION_FAILURE` (5, git unavailable)
+  as usual.
+- `BLOCKED` (2) - the read-only reference repository, any preflight
+  conflict listed above, or `--confirm` missing on a non-dry-run
+  invocation (`data.action == "confirmation_required"`). `--dry-run`
+  returns the same code a confirmed run would when the plan itself is
+  blocked.
+- `COMMAND_EXECUTION_FAILURE` (5) - `git worktree remove` itself failed,
+  or reported success without the removal being fully verifiable (see
+  "Partial-failure reporting").
+- `WARNINGS_PRESENT` (1) - the worktree was removed but the registry
+  write failed, or branch deletion was requested but refused/ineligible.
+- `SUCCESS` (0) - the worktree was removed (and, if requested, the
+  branch was too) with no partial state, or a conflict-free `--dry-run`.
+
+## Explicit non-goals
+
+No `worktree prune`, no bulk/sweep removal, no forced removal, no merge
 orchestration, no write-capable agents, no parallel task routing, no
-approvals, no MCP, no automatic commits. A partial failure's leftover
-branch/directory/registration is never cleaned up automatically.
+approvals, no MCP, no automatic commits, no deployment. A partial
+failure's leftover branch/directory/registration is never cleaned up
+automatically.

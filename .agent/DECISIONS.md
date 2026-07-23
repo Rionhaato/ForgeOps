@@ -524,3 +524,38 @@ a wrong guess in most other ForgeOps state.
 
 See `docs/worktrees.md` for the full NAME-validation rule and registry
 schema this codifies.
+
+## 2026-07-23 — `forgeops worktree remove` marks registry records `removed` instead of deleting them, and gates on `--confirm` rather than an interactive prompt
+
+Two deliberate choices for this checkpoint:
+
+1. A successful removal sets a record's `status` to a new
+   `STATUS_REMOVED` value (`forgeops/state/worktree_registry.py`)
+   rather than deleting the record from `WORKTREE_REGISTRY.json`, and
+   rather than adding a new field (e.g. `removed_at`). Every existing
+   active-record lookup (`worktree create`'s duplicate check, `worktree
+   list`'s registration marker, `worktree remove`'s own eligibility
+   check) already filters on `status == STATUS_ACTIVE`, so a removed
+   record is automatically inert everywhere without touching that
+   logic, while still preserving a concise removal/lifecycle history
+   instead of losing the record's identity entirely - satisfying the
+   checkpoint's explicit instruction to prefer this over unnecessary
+   schema expansion.
+2. Removal is gated on an explicit `--confirm` flag rather than an
+   interactive y/n prompt. The checkpoint's own instructions required
+   the command to "remain deterministic and automation-safe" and
+   explicitly forbade interactive confirmation - `--confirm` (mirroring
+   `cleanup --execute`'s established dry-run-by-default shape in this
+   same package) keeps `forgeops worktree remove` scriptable and
+   testable without stdin interaction, while still requiring an
+   unambiguous, explicit opt-in distinct from `--dry-run` before any
+   mutation happens. Missing `--confirm` on a non-dry-run invocation
+   returns `BLOCKED` (2) with `data.action == "confirmation_required"`
+   after running the identical full preflight `--dry-run` would - so a
+   caller always sees exactly what would happen before opting in.
+
+Branch deletion (`--delete-branch`) reuses the same `--confirm` gate
+rather than a separate flag, and is restricted to the `forgeops/<name>`
+namespace with a TOCTOU tip-commit recheck immediately before the
+actual (always non-force) `git branch -d` call - see `docs/worktrees.md`
+"Branch deletion (opt-in)" for the full eligibility list.

@@ -24,9 +24,17 @@ SUPPORTED_REGISTRY_SCHEMA_VERSIONS = {1}
 RUNTIME_DIR_RELATIVE = Path(".agent") / "runtime"
 REGISTRY_RELATIVE_PATH = RUNTIME_DIR_RELATIVE / "WORKTREE_REGISTRY.json"
 
-# The only status this checkpoint ever writes. Additional statuses
-# (e.g. "removed") belong to a future worktree-remove checkpoint.
+# STATUS_ACTIVE is the only status `forgeops worktree create` ever
+# writes. STATUS_REMOVED is written by `forgeops worktree remove` in
+# place of deleting the record outright - the record (id, name, path,
+# branch, base_commit, created_at) is kept as a concise removal/lifecycle
+# history entry rather than expanding the schema with new fields; every
+# active-record lookup (create's duplicate check, list's registration
+# marker, remove's own eligibility check) already filters on
+# `status == STATUS_ACTIVE`, so a removed record is automatically inert
+# without any additional filtering logic.
 STATUS_ACTIVE = "active"
+STATUS_REMOVED = "removed"
 
 
 @dataclass(frozen=True)

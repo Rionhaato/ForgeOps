@@ -20,7 +20,7 @@ forgeops/
     cleanup.py                   forgeops cleanup (conservative, dry-run-by-default process/registry cleanup)
     resume_context.py           forgeops resume-context (read-only, bounded-size compact resume summary)
     init.py                      forgeops init [PATH] (safe, deterministic project bootstrap - see docs/project-init.md)
-    worktree.py                   forgeops worktree list | create (safe Git worktree inspection/creation - see docs/worktrees.md)
+    worktree.py                   forgeops worktree list | create | remove (safe Git worktree inspection/creation/removal - see docs/worktrees.md)
   core/
     paths.py             repo-root discovery, path normalization, read-only reference repository protection
     git.py                read-only git-state inspection (status entries, renames, ahead/behind, ...)
@@ -49,6 +49,7 @@ forgeops/
     project_init.py             pure preflight-plan builder, content renderers, and rollback-on-failure writer for `forgeops init` (see docs/project-init.md)
     worktree_registry.py         .agent/runtime/WORKTREE_REGISTRY.json load/save (mirrors runtime_registry.py's shape/safety)
     worktree_create.py            pure preflight-plan builder and single mutating writer for `forgeops worktree create` (see docs/worktrees.md)
+    worktree_remove.py            pure preflight-plan builder and single mutating apply step for `forgeops worktree remove` (see docs/worktrees.md)
   worktrees/
     naming.py                NAME validation, deterministic branch-name/managed-root/path derivation
     git_worktree.py            git worktree list/add plumbing - tolerant porcelain parsing, no shell interpolation
@@ -84,13 +85,16 @@ target directly from a `path` argument rather than via
 `resolve_repo_root` - see "Target resolution" in `docs/project-init.md`
 for why it deliberately does not follow the shared repo-discovery
 convention every other command uses. `worktree.py` (the third mutating
-exception, and the first two-subcommand module since `test.py`) exposes
-`run_worktree_list` (read-only) and `run_worktree_create` (accepting
+exception, and the first three-subcommand module) exposes
+`run_worktree_list` (read-only), `run_worktree_create` (accepting
 `dry_run: bool = False`, `branch: str | None = None`,
-`base: str | None = None`), sharing one `render_human` that dispatches
-on `result.command` (`"worktree-list"` vs `"worktree-create"`) - see
-docs/worktrees.md for the managed root, branch-naming rule, conflict
-model, and registry this implements. `run_*` never touches `sys.argv`,
+`base: str | None = None`), and `run_worktree_remove` (accepting
+`dry_run: bool = False`, `confirm: bool = False`,
+`delete_branch: bool = False`), sharing one `render_human` that
+dispatches on `result.command` (`"worktree-list"` / `"worktree-create"`
+/ `"worktree-remove"`) - see docs/worktrees.md for the managed root,
+branch-naming rule, conflict model, registry, and removal
+eligibility/confirmation model this implements. `run_*` never touches `sys.argv`,
 `print`, or `sys.exit` — it's a pure function over its arguments, which is
 what makes it directly unit-testable (see `tests/integration/test_cli_*.py`)
 without spawning a subprocess. `main()` in `forgeops/cli/__init__.py` is
@@ -227,11 +231,11 @@ Only a genuinely unexpected exception (a real bug) is caught here:
   prints "not yet implemented" to stderr and exits 1. `forgeops test`
   without `--targeted` or `--full` behaves the same way. `checkpoint`,
   `handoff`, `process-list`, `cleanup`, `init`, and `worktree list`/
-  `worktree create` are now implemented (see
+  `worktree create`/`worktree remove` are now implemented (see
   `docs/checkpoint-and-handoff.md`, `docs/process-list-and-cleanup.md`,
-  `docs/project-init.md`, `docs/worktrees.md`). `worktree remove`/
-  `prune`/merge orchestration/agent assignment remain unimplemented -
-  see `docs/worktrees.md` "Explicit non-goals". See
+  `docs/project-init.md`, `docs/worktrees.md`). `worktree prune`, bulk/
+  forced removal, merge orchestration, and agent assignment remain
+  unimplemented - see `docs/worktrees.md` "Explicit non-goals". See
   `docs/phase2c-validation.md` for prior recommended-next-scope notes.
 - Process discovery (`forgeops/detectors/processes.py`) is Windows-only
   today - `forgeops process-list`/`forgeops cleanup` report a clear

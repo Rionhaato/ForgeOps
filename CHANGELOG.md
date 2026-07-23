@@ -6,6 +6,61 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Safe Worktree Removal
+- Implemented `forgeops worktree remove NAME` (mutating,
+  confirmation-gated): safe removal of a ForgeOps-created worktree and,
+  optionally, its ForgeOps-owned branch. Deliberately does not implement
+  pruning, bulk/forced removal, merge orchestration, agent execution,
+  task routing, or approvals - see `docs/worktrees.md` "Explicit
+  non-goals".
+- Confirmation model: without `--confirm`, runs the full preflight and
+  reports what would be removed but performs no mutation
+  (`BLOCKED`, `data.action == "confirmation_required"`); `--dry-run`
+  never requires `--confirm`, never mutates, and returns the same exit
+  code a confirmed run would. No interactive prompt - stays
+  deterministic and automation-safe.
+- Read-only preflight (`forgeops/state/worktree_remove.py:build_worktree_remove_plan`)
+  collects every eligibility, dirty, and busy conflict in a single pass
+  shared by `--dry-run`, the missing-`--confirm` response, and a real
+  run: invalid/absolute/traversal name, unregistered or ambiguous
+  (duplicate) registry state, malformed registry, registry/Git path or
+  branch-identity mismatch, path outside the managed root, protected
+  reference repository, active task/agent ownership, stale
+  registry-only entry, primary-checkout protection, a locked worktree,
+  uncommitted changes (staged/modified/untracked), an in-progress Git
+  operation (merge/rebase/cherry-pick/revert/bisect), and a live,
+  exactly-registered ForgeOps-managed process still associated with the
+  worktree's path.
+- Removal mechanics (`forgeops/state/worktree_remove.py:apply_worktree_remove`):
+  revalidates worktree identity immediately before mutating (closing
+  the preflight/apply gap), then a single `git worktree remove <path>`
+  - never `--force`, never `git worktree prune`, never a recursive
+  filesystem delete. Verifies both that Git no longer lists the path and
+  that the directory is actually gone before treating the removal as
+  successful; only then marks the registry record `removed` (a new
+  `STATUS_REMOVED` value, not a new schema field - `WORKTREE_REGISTRY.json`
+  records are preserved as concise removal/lifecycle history rather than
+  deleted). A failed or unverifiable `git worktree remove` never touches
+  the registry.
+- Branch preserved by default. `--delete-branch --confirm` opts into a
+  normal, non-force `git branch -d` only when the branch is in the
+  ForgeOps-owned `forgeops/<name>` namespace, matches the registry
+  record, is local and not checked out elsewhere, and its tip commit
+  still matches what was captured at preflight (a TOCTOU guard) -
+  **never** `git branch -D`, never a remote deletion. An unmerged
+  branch's refusal by Git is surfaced as-is: the branch stays intact,
+  the (already-completed) worktree removal is still reported, and the
+  overall result is `WARNINGS_PRESENT` rather than a failure.
+- Every partial-failure state (failed git removal, git-reported-success-
+  but-still-listed, registry write failure after a verified removal, an
+  identity change between preflight and apply, a refused/ineligible
+  branch deletion) is reported explicitly with `data.partial_state`/
+  `data.manual_recovery_recommendation` where applicable - never
+  silently upgraded to success, never automatically force-cleaned.
+- New git plumbing: `forgeops/worktrees/git_worktree.py:remove_worktree`
+  (`git worktree remove`, never `--force`) and `delete_branch_safe`
+  (`git branch -d`, never `-D`).
+
 ### Safe Git Worktree Foundation
 - Implemented `forgeops worktree list` (read-only) and `forgeops
   worktree create NAME` (mutating, `--dry-run` supported): a bounded

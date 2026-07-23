@@ -122,6 +122,26 @@ Per-command specifics:
   code a real run would; otherwise `WARNINGS_PRESENT` (1) if the
   worktree itself was created but its registry record could not be
   written; otherwise `SUCCESS` (0). See `docs/worktrees.md`.
+- **`worktree remove`**: `REPO_NOT_FOUND` (4) / `COMMAND_EXECUTION_FAILURE`
+  (5, git unavailable) as above; `COMMAND_EXECUTION_FAILURE` (5) also if
+  `git worktree remove` itself fails, or reports success without the
+  removal being fully verifiable (Git still lists it, or the directory
+  still exists - never claimed as a success either way); `BLOCKED` (2)
+  if the target is the read-only reference repository, if preflight
+  finds any eligibility/dirty/busy conflict (unregistered, malformed or
+  ambiguous registry, stale registry entry, primary checkout, identity
+  mismatch, locked, dirty working tree, an in-progress Git operation, an
+  active task/agent/managed-process owner), or if `--confirm` is missing
+  on a non-dry-run invocation (`data.action == "confirmation_required"`)
+  - `--dry-run` returns the same code a confirmed run would; otherwise
+  `WARNINGS_PRESENT` (1) if the worktree was removed but its registry
+  update failed, or `--delete-branch` was requested but refused (not
+  fully merged) or ineligible (non-ForgeOps namespace, checked out
+  elsewhere, tip moved since preflight); otherwise `SUCCESS` (0) - the
+  worktree (and, if requested, the branch) was fully removed, or a
+  conflict-free `--dry-run`. Never force-removes, never prunes, never
+  force-deletes a branch, never deletes a remote branch. See
+  `docs/worktrees.md`.
 
 ## Stability guarantee
 

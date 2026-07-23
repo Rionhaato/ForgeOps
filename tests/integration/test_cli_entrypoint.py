@@ -56,9 +56,9 @@ def test_python_dash_m_forgeops_init_real_execution(tmp_path):
 
 
 def test_python_dash_m_forgeops_worktree_requires_a_subcommand(git_repo):
-    # `worktree` requires an explicit `list` or `create` subcommand -
-    # argparse itself enforces this (required=True on the nested
-    # subparsers) and reports its own usage error, exit code 2.
+    # `worktree` requires an explicit `list`, `create`, or `remove`
+    # subcommand - argparse itself enforces this (required=True on the
+    # nested subparsers) and reports its own usage error, exit code 2.
     result = _run_module(["worktree", "--repo", str(git_repo)], cwd=git_repo)
     assert result.returncode == 2
 
@@ -74,6 +74,22 @@ def test_python_dash_m_forgeops_worktree_create_real_execution(git_repo):
     assert result.returncode == 0
     assert "forgeops worktree create" in result.stdout
     assert (git_repo.parent / ".forgeops-worktrees" / git_repo.name / "demo").is_dir()
+
+
+def test_python_dash_m_forgeops_worktree_remove_real_execution(git_repo):
+    create_result = _run_module(["worktree", "create", "demo", "--repo", str(git_repo)], cwd=git_repo)
+    assert create_result.returncode == 0
+    worktree_path = git_repo.parent / ".forgeops-worktrees" / git_repo.name / "demo"
+    assert worktree_path.is_dir()
+
+    no_confirm = _run_module(["worktree", "remove", "demo", "--repo", str(git_repo)], cwd=git_repo)
+    assert no_confirm.returncode == 2  # BLOCKED: confirmation required
+    assert worktree_path.is_dir()
+
+    result = _run_module(["worktree", "remove", "demo", "--repo", str(git_repo), "--confirm"], cwd=git_repo)
+    assert result.returncode == 0
+    assert "forgeops worktree remove" in result.stdout
+    assert not worktree_path.exists()
 
 
 def test_python_dash_m_forgeops_invalid_repo_path_exit_code(tmp_path):

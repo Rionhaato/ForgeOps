@@ -34,6 +34,7 @@ from forgeops.cli import release_check as release_check_cmd
 from forgeops.cli import resume_context as resume_context_cmd
 from forgeops.cli import status as status_cmd
 from forgeops.cli import test as test_cmd
+from forgeops.cli import worktree as worktree_cmd
 from forgeops.core import exit_codes
 from forgeops.core.paths import find_repo_root
 from forgeops.core.result import CommandResult
@@ -42,7 +43,7 @@ from forgeops.security.redact import redact_text
 
 PHASE_2A_COMMANDS = ("doctor", "status", "audit")
 NOT_YET_IMPLEMENTED_COMMANDS = (
-    "worktree", "agents", "approvals",
+    "agents", "approvals",
     "validate-config", "install", "uninstall",
 )
 
@@ -109,6 +110,21 @@ def build_parser() -> argparse.ArgumentParser:
     init_sub.add_argument("path", nargs="?", default=None, help="target directory to initialize (default: current directory)")
     init_sub.add_argument("--json", action="store_true")
     init_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be created/preserved/blocked, write nothing")
+
+    worktree_sub = subparsers.add_parser("worktree", help="forgeops worktree list | create")
+    worktree_subparsers = worktree_sub.add_subparsers(dest="worktree_command", required=True)
+
+    worktree_list_sub = worktree_subparsers.add_parser("list", help="forgeops worktree list")
+    worktree_list_sub.add_argument("--repo", default=None)
+    worktree_list_sub.add_argument("--json", action="store_true")
+
+    worktree_create_sub = worktree_subparsers.add_parser("create", help="forgeops worktree create NAME")
+    worktree_create_sub.add_argument("name", help="worktree name (single path segment - no separators, no absolute paths)")
+    worktree_create_sub.add_argument("--repo", default=None)
+    worktree_create_sub.add_argument("--json", action="store_true")
+    worktree_create_sub.add_argument("--branch", default=None, help="branch to create (default: forgeops/<name>)")
+    worktree_create_sub.add_argument("--base", default=None, help="base ref to create the worktree from (default: HEAD)")
+    worktree_create_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be created, write/mutate nothing")
 
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
@@ -179,6 +195,12 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
         return resume_context_cmd.run_resume_context(args.repo)
     if args.command == "init":
         return init_cmd.run_init(args.path, dry_run=args.dry_run)
+    if args.command == "worktree":
+        if args.worktree_command == "list":
+            return worktree_cmd.run_worktree_list(args.repo)
+        return worktree_cmd.run_worktree_create(
+            args.name, args.repo, dry_run=args.dry_run, branch=args.branch, base=args.base,
+        )
     # Resolved via getattr on the module, not a pre-bound reference, so
     # that monkeypatching e.g. forgeops.cli.doctor_cmd.run_doctor (the
     # normal way tests substitute behavior) actually takes effect - a
@@ -208,6 +230,8 @@ def _render_result(args: argparse.Namespace, result: CommandResult) -> str:
         return resume_context_cmd.render_human(result)
     if args.command == "init":
         return init_cmd.render_human(result)
+    if args.command == "worktree":
+        return worktree_cmd.render_human(result)
     module = _SIMPLE_MODULES[args.command]
     return module.render_human(result)
 
@@ -226,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dispatchable = args.command in _SIMPLE_MODULES or args.command in (
         "changed", "test", "release-check", "checkpoint", "handoff",
-        "process-list", "cleanup", "resume-context", "init",
+        "process-list", "cleanup", "resume-context", "init", "worktree",
     )
     if not dispatchable:
         print(

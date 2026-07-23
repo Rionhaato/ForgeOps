@@ -20,6 +20,7 @@ forgeops/
     cleanup.py                   forgeops cleanup (conservative, dry-run-by-default process/registry cleanup)
     resume_context.py           forgeops resume-context (read-only, bounded-size compact resume summary)
     init.py                      forgeops init [PATH] (safe, deterministic project bootstrap - see docs/project-init.md)
+    worktree.py                   forgeops worktree list | create (safe Git worktree inspection/creation - see docs/worktrees.md)
   core/
     paths.py             repo-root discovery, path normalization, read-only reference repository protection
     git.py                read-only git-state inspection (status entries, renames, ahead/behind, ...)
@@ -46,6 +47,11 @@ forgeops/
     runtime_registry.py       .agent/runtime/PROCESS_REGISTRY.json load/save (shared by process-list + cleanup)
     resume_context.py          pure, bounded-size compact resume-context document builder (shared by resume-context CLI)
     project_init.py             pure preflight-plan builder, content renderers, and rollback-on-failure writer for `forgeops init` (see docs/project-init.md)
+    worktree_registry.py         .agent/runtime/WORKTREE_REGISTRY.json load/save (mirrors runtime_registry.py's shape/safety)
+    worktree_create.py            pure preflight-plan builder and single mutating writer for `forgeops worktree create` (see docs/worktrees.md)
+  worktrees/
+    naming.py                NAME validation, deterministic branch-name/managed-root/path derivation
+    git_worktree.py            git worktree list/add plumbing - tolerant porcelain parsing, no shell interpolation
   reporting/
     logs.py                 logs/<command>/<timestamp>/ persistence
   testing/
@@ -77,7 +83,14 @@ accepting `dry_run: bool = False`, `render_human`) resolves its own
 target directly from a `path` argument rather than via
 `resolve_repo_root` - see "Target resolution" in `docs/project-init.md`
 for why it deliberately does not follow the shared repo-discovery
-convention every other command uses. `run_*` never touches `sys.argv`,
+convention every other command uses. `worktree.py` (the third mutating
+exception, and the first two-subcommand module since `test.py`) exposes
+`run_worktree_list` (read-only) and `run_worktree_create` (accepting
+`dry_run: bool = False`, `branch: str | None = None`,
+`base: str | None = None`), sharing one `render_human` that dispatches
+on `result.command` (`"worktree-list"` vs `"worktree-create"`) - see
+docs/worktrees.md for the managed root, branch-naming rule, conflict
+model, and registry this implements. `run_*` never touches `sys.argv`,
 `print`, or `sys.exit` — it's a pure function over its arguments, which is
 what makes it directly unit-testable (see `tests/integration/test_cli_*.py`)
 without spawning a subprocess. `main()` in `forgeops/cli/__init__.py` is
@@ -208,16 +221,18 @@ Only a genuinely unexpected exception (a real bug) is caught here:
 - `forgeops audit`'s secret scan is line-based pattern matching, not a
   parser — see `docs/audit-security-model.md` for what this does and
   doesn't catch.
-- `forgeops worktree`, `agents`, `approvals`, `validate-config`,
-  `install`, `uninstall` are registered in the argument parser (so
-  `forgeops <name> --help` works and produces a clean error) but not
-  implemented — invoking any of them prints "not yet implemented" to
-  stderr and exits 1. `forgeops test` without `--targeted` or `--full`
-  behaves the same way. `checkpoint`, `handoff`, `process-list`,
-  `cleanup`, and `init` are now implemented (see
+- `agents`, `approvals`, `validate-config`, `install`, `uninstall` are
+  registered in the argument parser (so `forgeops <name> --help` works
+  and produces a clean error) but not implemented — invoking any of them
+  prints "not yet implemented" to stderr and exits 1. `forgeops test`
+  without `--targeted` or `--full` behaves the same way. `checkpoint`,
+  `handoff`, `process-list`, `cleanup`, `init`, and `worktree list`/
+  `worktree create` are now implemented (see
   `docs/checkpoint-and-handoff.md`, `docs/process-list-and-cleanup.md`,
-  `docs/project-init.md`). See `docs/phase2c-validation.md` for prior
-  recommended-next-scope notes.
+  `docs/project-init.md`, `docs/worktrees.md`). `worktree remove`/
+  `prune`/merge orchestration/agent assignment remain unimplemented -
+  see `docs/worktrees.md` "Explicit non-goals". See
+  `docs/phase2c-validation.md` for prior recommended-next-scope notes.
 - Process discovery (`forgeops/detectors/processes.py`) is Windows-only
   today - `forgeops process-list`/`forgeops cleanup` report a clear
   `WARNINGS_PRESENT` limitation and an empty process list on other

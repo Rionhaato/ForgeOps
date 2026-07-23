@@ -525,6 +525,104 @@ def test_init_omitted_path_argument_is_passed_as_none(tmp_path, monkeypatch):
     assert captured_kwargs["path_arg"] is None
 
 
+def test_worktree_list_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in worktree list")
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_list", boom)
+    exit_code = main(["worktree", "list", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in worktree list" in captured.err
+
+
+def test_worktree_list_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in worktree list")
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_list", boom)
+    exit_code = main(["worktree", "list", "--repo", str(git_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_worktree_list_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in worktree list")
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_list", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in worktree list"):
+        main(["--debug", "worktree", "list", "--repo", str(git_repo)])
+
+
+def test_worktree_create_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in worktree create")
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_create", boom)
+    exit_code = main(["worktree", "create", "demo", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in worktree create" in captured.err
+    # A crash before any git mutation must never leave a partial worktree behind.
+    assert not (git_repo.parent / ".forgeops-worktrees").exists()
+
+
+def test_worktree_create_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in worktree create")
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_create", boom)
+    exit_code = main(["worktree", "create", "demo", "--repo", str(git_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_worktree_create_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in worktree create")
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_create", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in worktree create"):
+        main(["--debug", "worktree", "create", "demo", "--repo", str(git_repo)])
+
+
+def test_worktree_create_dry_run_flag_reaches_run_worktree_create(git_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_worktree_create(name_arg, repo_arg, dry_run=False, branch=None, base=None):
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.worktree import run_worktree_create as real
+        return real(name_arg, repo_arg, write_log=False, dry_run=dry_run, branch=branch, base=base)
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_create", fake_run_worktree_create)
+    main(["worktree", "create", "demo", "--repo", str(git_repo), "--dry-run"])
+    assert captured_kwargs["dry_run"] is True
+
+
+def test_worktree_create_branch_and_base_flags_reach_run_worktree_create(git_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_worktree_create(name_arg, repo_arg, dry_run=False, branch=None, base=None):
+        captured_kwargs["branch"] = branch
+        captured_kwargs["base"] = base
+        from forgeops.cli.worktree import run_worktree_create as real
+        return real(name_arg, repo_arg, write_log=False, dry_run=True, branch=branch, base=base)
+
+    monkeypatch.setattr("forgeops.cli.worktree_cmd.run_worktree_create", fake_run_worktree_create)
+    main(["worktree", "create", "demo", "--repo", str(git_repo), "--branch", "my-branch", "--base", "HEAD", "--dry-run"])
+    assert captured_kwargs["branch"] == "my-branch"
+    assert captured_kwargs["base"] == "HEAD"
+
+
 def test_test_command_requires_a_mode_flag(git_repo, capsys):
     exit_code = main(["test", "--repo", str(git_repo)])
     captured = capsys.readouterr()

@@ -37,14 +37,19 @@ Claude Code hooks, and a read-only Superpowers compatibility record (see
 (safe, deterministic bootstrap of the minimum ForgeOps governance
 structure for a target project - ownership/conflict detection, atomic
 writes with rollback, TrendForge protection, and non-Git support - see
-`docs/project-init.md`).
+`docs/project-init.md`). Most recently, `forgeops worktree list`/
+`forgeops worktree create` (safe Git worktree inspection and bounded
+creation under a deterministic managed root, with `--dry-run`,
+conflict preflight, partial-failure reporting, and an atomic
+`.agent/runtime/WORKTREE_REGISTRY.json` - see `docs/worktrees.md`).
 See `docs/architecture-decision.md` for why this project exists and what
 it deliberately does not build, `docs/cli-architecture.md` for how the
 CLI is put together, `docs/checkpoint-and-handoff.md` for the two state
 writers, `docs/process-list-and-cleanup.md` for process discovery and
 cleanup's safety model, `docs/context-efficiency.md` for the context-
-efficiency layer, `docs/project-init.md` for `forgeops init`, and
-`.agent/HANDOFF.md` for current progress.
+efficiency layer, `docs/project-init.md` for `forgeops init`,
+`docs/worktrees.md` for `forgeops worktree`, and `.agent/HANDOFF.md` for
+current progress.
 
 ## CLAUDE.md vs. `.agent/` state files
 
@@ -96,12 +101,18 @@ forgeops checkpoint --dry-run             # preview the state document, write no
 forgeops handoff --dry-run                  # preview the handoff markdown, write nothing
 forgeops cleanup --execute                    # actually attempt graceful termination of eligible ("managed") processes
 forgeops init --dry-run                         # preview what init would create/preserve/block, write nothing
+forgeops worktree list                              # read-only: repository root, worktrees, branch/HEAD, locked/prunable/registry state
+forgeops worktree create NAME                          # create an isolated worktree + new branch under the managed root
+forgeops worktree create NAME --dry-run                    # preview branch/path/conflicts, create nothing
+forgeops worktree create NAME --branch B --base REF            # explicit branch name / base ref instead of the derived defaults
 ```
 
-Every other command named in the long-term design (`worktree`, `agents`,
+Every other command named in the long-term design (`agents`,
 `approvals`, `validate-config`, `install`, `uninstall`) is registered
 but not yet implemented — see `docs/phase2c-validation.md` for prior
-recommended-next-scope notes.
+recommended-next-scope notes. `forgeops worktree` implements only
+`list`/`create` in this checkpoint — no `remove`/`prune`/merge
+orchestration yet, see `docs/worktrees.md`.
 
 ## Layout
 

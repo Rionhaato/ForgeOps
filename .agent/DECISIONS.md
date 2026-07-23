@@ -488,3 +488,39 @@ over DRY here. Verified in tests via a monkeypatched
 `READONLY_REFERENCE_REPO` pointed at a fake path under `tmp_path` - the
 real TrendForge checkout is never used as a test target, per standing
 instruction.
+
+## 2026-07-23 — `forgeops worktree create` NAME validation rejects rather than sanitizes, and its registry fails the whole document closed on any bad record
+
+Two deliberate deviations from the nearest existing precedent, both
+made for the same reason: a worktree NAME/registry entry controls a
+filesystem path and a branch name, so a wrong guess here is worse than
+a wrong guess in most other ForgeOps state.
+
+1. `forgeops/worktrees/naming.py:validate_worktree_name` uses a strict
+   allow-list (`^[A-Za-z0-9][A-Za-z0-9_-]*$`, plus length/absolute-path/
+   reserved-device-name checks) and rejects anything outside it outright
+   - it never strips or rewrites a NAME to make it valid. This is what
+   makes traversal sequences, separators, spaces, and absolute/drive-
+   letter paths impossible by construction, without special-casing each
+   one individually, and matches the explicit instruction this
+   checkpoint was built under ("reject ambiguous names rather than
+   silently changing meaning").
+2. `forgeops/state/worktree_registry.py:load_registry` treats *any*
+   individual unreadable record as making the *whole* registry
+   malformed, unlike `forgeops/state/runtime_registry.py` (the process
+   registry this one mirrors in every other way), which skips a bad
+   record and keeps the rest. The process registry's consumer
+   (`cleanup`) only ever *reads* it to decide what's eligible for
+   termination - a dropped bad record just means one fewer termination
+   candidate, a safe direction to fail in. The worktree registry's
+   consumer (`worktree create`'s preflight) uses an *absence* of a
+   matching record as part of its "no conflict" answer - silently
+   dropping one unreadable record could make a real conflict invisible.
+   Failing the whole document closed (and refusing to create until a
+   human resolves it) was chosen over that risk. `worktree list`
+   remains unaffected: it already treats a malformed registry as a
+   warning and keeps listing from Git's own (independently authoritative)
+   state regardless.
+
+See `docs/worktrees.md` for the full NAME-validation rule and registry
+schema this codifies.

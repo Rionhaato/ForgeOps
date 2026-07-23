@@ -103,6 +103,25 @@ Per-command specifics:
   rolled back first); otherwise `SUCCESS` (0) for a clean or idempotent
   initialization. Never returns `WARNINGS_PRESENT` or `INVALID_CONFIG` -
   see `docs/project-init.md`.
+- **`worktree list`**: `REPO_NOT_FOUND` (4) / `COMMAND_EXECUTION_FAILURE`
+  (5, git unavailable or `git worktree list` itself failing) as above;
+  otherwise `WARNINGS_PRESENT` (1) if the worktree registry has a schema
+  warning, a stale entry was detected, or `git worktree list`'s output
+  itself produced a parse warning; otherwise `SUCCESS` (0). Read-only -
+  never returns `BLOCKED`. See `docs/worktrees.md`.
+- **`worktree create`**: `REPO_NOT_FOUND` (4) if no repository is
+  discoverable (this includes a true bare repository - see "Known
+  limitation" in `docs/worktrees.md`) / `COMMAND_EXECUTION_FAILURE` (5)
+  if git is unavailable or `git worktree add` itself fails (partial
+  state detected and reported, nothing rolled back automatically);
+  `BLOCKED` (2) if the target is the read-only reference repository, or
+  if preflight finds any conflict (invalid name, existing destination,
+  duplicate worktree/registry entry, branch already exists or checked
+  out elsewhere, unresolvable base ref, a malformed registry, a bare
+  repository reached some other way) - `--dry-run` returns the same
+  code a real run would; otherwise `WARNINGS_PRESENT` (1) if the
+  worktree itself was created but its registry record could not be
+  written; otherwise `SUCCESS` (0). See `docs/worktrees.md`.
 
 ## Stability guarantee
 

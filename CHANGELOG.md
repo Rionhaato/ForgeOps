@@ -6,6 +6,90 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Safe Git Worktree Foundation
+- Implemented `forgeops worktree list` (read-only) and `forgeops
+  worktree create NAME` (mutating, `--dry-run` supported): a bounded
+  foundation for isolated parallel work. Deliberately does not
+  implement worktree removal, pruning, merge orchestration, agent
+  execution, task routing, or approvals - see `docs/worktrees.md`
+  "Explicit non-goals".
+- Worktrees are created only beneath a deterministic managed root,
+  `<repository-parent>/.forgeops-worktrees/<repository-name>/<name>`,
+  never inside the source checkout. `NAME` is validated against a
+  strict allow-list (`^[A-Za-z0-9][A-Za-z0-9_-]*$`, max 100 chars, no
+  absolute paths, no Windows reserved device names) and **rejected
+  outright** rather than sanitized/rewritten on any violation - this
+  single rule makes traversal sequences, separators, spaces, and
+  absolute/drive-letter paths all impossible by construction.
+- Branch naming: `--branch` omitted derives `forgeops/<name>`;
+  `worktree create` always creates a **new** branch (`git worktree add
+  -b`) and never reuses or resets an existing one - a requested branch
+  that already exists, or is already checked out elsewhere, blocks
+  creation with a distinct conflict reason for each case.
+- Base ref resolution: `--base` omitted defaults to `HEAD`, resolved to
+  a fixed commit SHA during preflight and passed to `git worktree add`
+  as that SHA (never a movable ref name), so a concurrent branch update
+  between preflight and creation cannot change what the new worktree is
+  based on.
+- Read-only preflight (`forgeops/state/worktree_create.py:build_worktree_create_plan`)
+  collects every conflict (protected reference repo, bare repository,
+  invalid name, existing destination, outside the managed root,
+  duplicate worktree, branch already exists/checked out elsewhere,
+  unresolvable base ref, malformed or conflicting registry state) in a
+  single read-only pass shared identically by `--dry-run` and a real
+  run, so both always agree on whether creation would proceed and on
+  the exit code.
+- Atomicity/partial-failure handling: `git worktree add` failing
+  triggers detection and reporting of exactly what partial state
+  remains (directory/branch/git-registration) plus a manual recovery
+  recommendation - never a force-remove, `git worktree prune`, or `git
+  branch -D`; cleanup of a partial failure is left to a human by
+  design in this checkpoint.
+- New atomic, schema-versioned registry: `.agent/runtime/WORKTREE_REGISTRY.json`
+  (`forgeops/state/worktree_registry.py`, mirroring
+  `runtime_registry.py`'s shape/safety properties) - one record per
+  created worktree (id, name, path, branch, base commit, created
+  timestamp, status; `task_id`/`agent_id` fields exist for a future
+  checkpoint but are always written `null` here). Unlike the process
+  registry, any single unreadable record marks the *whole* registry
+  malformed (fails safe for conflict detection) rather than being
+  silently skipped. `worktree list` still works from Git's own state
+  when the registry is absent or malformed; `worktree create` refuses
+  to proceed when it's malformed.
+- `worktree list` reports, per worktree: path, HEAD, branch or detached
+  state, bare/locked/locked-reason/prunable/prunable-reason, whether
+  it's the primary checkout, whether it's inside the managed root, and
+  whether/how it's registered with ForgeOps - parsed from `git worktree
+  list --porcelain`, tolerantly (an unrecognized porcelain line degrades
+  to a warning, never a crash). Also detects and reports (never
+  auto-removes) stale registry entries whose path no longer appears in
+  Git's own worktree list.
+- New: `forgeops/worktrees/naming.py` (NAME validation, deterministic
+  branch/root/path derivation), `forgeops/worktrees/git_worktree.py`
+  (porcelain-list parsing, `git worktree add`, branch/ref plumbing - no
+  shell interpolation anywhere), `forgeops/state/worktree_registry.py`,
+  `forgeops/state/worktree_create.py` (preflight plan builder + the
+  single mutating apply step), `forgeops/cli/worktree.py` (thin CLI
+  handler for both subcommands).
+- New doc: `docs/worktrees.md`, including a documented known limitation
+  (a true bare repository has no `.git` entry anywhere, so the shared
+  repo-root discovery every command reuses can never find it at all -
+  `worktree create` still safely refuses via `REPO_NOT_FOUND` rather
+  than a false `SUCCESS`). Updates to `docs/cli-architecture.md`,
+  `docs/cli-exit-codes.md`, `README.md`.
+- 710 passing tests (up from 579): porcelain-parsing matrix (single/
+  multiple/detached/bare/locked-with-and-without-reason/prunable/
+  malformed output), NAME validation matrix, registry load/save/
+  malformed-record handling, preflight conflict matrix (every conflict
+  key above, individually and against real disposable git repositories
+  including one with spaces in its path), dry-run/real-run exit-code
+  agreement, simulated `git worktree add` failure and partial-state
+  reporting, credential-shaped values never leaking, real end-to-end
+  smoke validation (dry-run, real creation, listing the result, registry
+  contents, source-checkout tracked files verified unmodified, no
+  remote configured), and a regression check that every existing
+  command is unaffected.
+
 ### Safe Project Initialization
 - Implemented `forgeops init [PATH]`: safe, deterministic bootstrap of
   the minimum ForgeOps governance structure for a target project (a

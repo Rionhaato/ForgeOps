@@ -808,3 +808,97 @@ def test_task_show_unexpected_exception_returns_internal_error(initialized_repo,
 def test_task_command_requires_a_subcommand(initialized_repo):
     with pytest.raises(SystemExit):
         main(["task", "--repo", str(initialized_repo)])
+
+
+def test_task_assign_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task assign")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_assign", boom)
+    exit_code = main(["task", "assign", "task-0001", "demo", "--repo", str(initialized_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in task assign" in captured.err
+
+
+def test_task_assign_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task assign")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_assign", boom)
+    exit_code = main(["task", "assign", "task-0001", "demo", "--repo", str(initialized_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_task_assign_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task assign")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_assign", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task assign"):
+        main(["--debug", "task", "assign", "task-0001", "demo", "--repo", str(initialized_repo)])
+
+
+def test_task_assign_dry_run_flag_reaches_run_task_assign(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_task_assign(task_id, worktree_name, repo_arg, dry_run=False):
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.task import run_task_assign as real
+        return real(task_id, worktree_name, repo_arg, write_log=False, dry_run=dry_run)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_assign", fake_run_task_assign)
+    main(["task", "assign", "task-0001", "demo", "--repo", str(initialized_repo), "--dry-run"])
+    assert captured_kwargs["dry_run"] is True
+
+
+def test_task_unassign_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task unassign")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_unassign", boom)
+    exit_code = main(["task", "unassign", "task-0001", "--repo", str(initialized_repo), "--confirm"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "simulated internal bug in task unassign" in captured.err
+
+
+def test_task_unassign_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task unassign")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_unassign", boom)
+    exit_code = main(["task", "unassign", "task-0001", "--repo", str(initialized_repo), "--confirm", "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+
+
+def test_task_unassign_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task unassign")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_unassign", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task unassign"):
+        main(["--debug", "task", "unassign", "task-0001", "--repo", str(initialized_repo), "--confirm"])
+
+
+def test_task_unassign_confirm_and_dry_run_flags_reach_run_task_unassign(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_task_unassign(task_id, repo_arg, dry_run=False, confirm=False):
+        captured_kwargs["confirm"] = confirm
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.task import run_task_unassign as real
+        return real(task_id, repo_arg, write_log=False, dry_run=dry_run, confirm=confirm)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_unassign", fake_run_task_unassign)
+    main(["task", "unassign", "task-0001", "--repo", str(initialized_repo), "--confirm"])
+    assert captured_kwargs["confirm"] is True
+    assert captured_kwargs["dry_run"] is False

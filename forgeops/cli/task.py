@@ -1,16 +1,20 @@
-"""`forgeops task create|show|list|validate|close` - the persistent Task
-Specification Engine. Stores task intent, scope, acceptance criteria,
-validation expectations, and final outcome under `.agent/tasks/`,
+"""`forgeops task create|show|list|validate|close|assign|unassign` - the
+persistent Task Specification Engine plus its ownership layer. Stores
+task intent, scope, acceptance criteria, validation expectations, final
+outcome, and (this checkpoint) worktree ownership under `.agent/tasks/`,
 outside conversational context. See docs/tasks.md for the directory
 contract, ID generation, lifecycle, and explicit non-goals (no agent
 assignment, no agent execution, no parallel routing, no automatic
 worktree creation, no approvals, no merges).
 
-Follows the same shape as `forgeops/cli/worktree.py`: five `run_*`
+Follows the same shape as `forgeops/cli/worktree.py`: seven `run_*`
 entry points sharing one `render_human`, dispatching on
-`result.command`. `task create` and `task close` are the two mutating
-commands (both support `--dry-run`; `task close` additionally requires
-`--confirm`) - `task show`/`task list`/`task validate` are read-only."""
+`result.command`. `task create`, `task assign`, and `task close` are
+mutating (all support `--dry-run`; `task close`/`task unassign`
+additionally require `--confirm` - `task assign` does not, mirroring
+`task create`/`worktree create`'s own no-confirm-needed, easily-reversed
+shape rather than `task close`/`worktree remove`'s destructive one) -
+`task show`/`task list`/`task validate` are read-only."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,6 +29,12 @@ from forgeops.reporting.logs import LogWriter
 from forgeops.state.schema import check_current_state
 from forgeops.state.task_close import apply_task_close, build_task_close_plan
 from forgeops.state.task_create import apply_task_create, build_task_create_plan
+from forgeops.state.task_ownership import (
+    apply_task_assign,
+    apply_task_unassign,
+    build_task_assign_plan,
+    build_task_unassign_plan,
+)
 from forgeops.state.task_registry import (
     TASKS_DIR_RELATIVE,
     TASK_ID_RE,
@@ -466,6 +476,191 @@ def run_task_close(
     return _finish(repo_root, "task-close", checks, data, exit_code, summary, clock, write_log)
 
 
+# --- task assign -----------------------------------------------------------------
+
+
+def run_task_assign(
+    task_id: str,
+    worktree_name: str,
+    repo_arg: str | None,
+    cwd: Path | None = None,
+    clock: Clock | None = None,
+    write_log: bool = True,
+    dry_run: bool = False,
+) -> CommandResult:
+    if git_version() is None:
+        return _no_git_result("task-assign", clock)
+    try:
+        repo_root = resolve_repo_root(repo_arg, cwd)
+    except RepoNotFoundError as exc:
+        return _repo_not_found_result("task-assign", exc, clock)
+
+    blocked = _repo_level_block(repo_root, "task-assign", clock, write_log)
+    if blocked is not None:
+        return blocked
+
+    checks: list[Check] = [Check("repo-discovery", "Repository discovery", "pass", str(repo_root))]
+    plan = build_task_assign_plan(repo_root, task_id, worktree_name)
+
+    if plan.conflicts:
+        for c in plan.conflicts:
+            checks.append(Check(f"preflight-{c.key}", f"Preflight: {c.key}", "blocked", c.message))
+    else:
+        checks.append(Check("preflight", "Preflight", "pass", "no conflicts detected"))
+
+    data: dict = {
+        "dry_run": dry_run,
+        "task_id": task_id,
+        "worktree_name": worktree_name,
+        "conflicts": [{"key": c.key, "message": c.message} for c in plan.conflicts],
+        "would_proceed": not plan.has_conflict,
+    }
+
+    if plan.has_conflict:
+        data["action"] = "blocked"
+        exit_code = exit_codes.BLOCKED
+        summary = f"task assign: blocked by {len(plan.conflicts)} conflict(s) (exit {exit_code})"
+        return _finish(repo_root, "task-assign", checks, data, exit_code, summary, clock, write_log)
+
+    if dry_run:
+        data["action"] = "would_assign"
+        checks.append(Check(
+            "write", "Task assignment", "informational",
+            f"dry-run: would assign worktree '{worktree_name}' to task '{task_id}' - no file was written",
+        ))
+        exit_code = exit_codes.SUCCESS
+        summary = f"task assign: dry-run, would assign {worktree_name} to {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-assign", checks, data, exit_code, summary, clock, write_log)
+
+    outcome = apply_task_assign(repo_root, plan, clock)
+    if not outcome.ok:
+        data["action"] = "assignment_failed"
+        data["partial_state"] = outcome.partial_state
+        data["manual_recovery_recommendation"] = (
+            f"Inspect `{task_dir_for(repo_root, task_id)}/TASK.json` and the worktree registry directly - "
+            "ownership may be partially updated. forgeops does not retry or force-replace automatically; "
+            "resolve manually before retrying."
+        )
+        checks.append(Check("write", "Task assignment", "fail", f"assignment did not fully complete: {outcome.partial_state}"))
+        exit_code = exit_codes.COMMAND_EXECUTION_FAILURE
+        summary = f"task assign: assignment failed for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-assign", checks, data, exit_code, summary, clock, write_log)
+
+    data["action"] = "assigned"
+    data["index_written"] = outcome.index_written
+    checks.append(Check("write", "Task assignment", "pass", f"assigned worktree '{worktree_name}' to task '{task_id}'"))
+    if outcome.index_error:
+        data["index_error"] = outcome.index_error
+        checks.append(Check("index-write", "Task index write", "warning", f"assignment succeeded but index was not updated: {outcome.index_error}"))
+        exit_code = exit_codes.WARNINGS_PRESENT
+    else:
+        checks.append(Check("index-write", "Task index write", "pass", "index updated"))
+        exit_code = exit_codes.SUCCESS
+    summary = f"task assign: assigned {worktree_name} to {task_id} (exit {exit_code})"
+    return _finish(repo_root, "task-assign", checks, data, exit_code, summary, clock, write_log)
+
+
+# --- task unassign -----------------------------------------------------------------
+
+
+def run_task_unassign(
+    task_id: str,
+    repo_arg: str | None,
+    cwd: Path | None = None,
+    clock: Clock | None = None,
+    write_log: bool = True,
+    dry_run: bool = False,
+    confirm: bool = False,
+) -> CommandResult:
+    if git_version() is None:
+        return _no_git_result("task-unassign", clock)
+    try:
+        repo_root = resolve_repo_root(repo_arg, cwd)
+    except RepoNotFoundError as exc:
+        return _repo_not_found_result("task-unassign", exc, clock)
+
+    blocked = _repo_level_block(repo_root, "task-unassign", clock, write_log)
+    if blocked is not None:
+        return blocked
+
+    checks: list[Check] = [Check("repo-discovery", "Repository discovery", "pass", str(repo_root))]
+    plan = build_task_unassign_plan(repo_root, task_id)
+
+    if plan.conflicts:
+        for c in plan.conflicts:
+            checks.append(Check(f"preflight-{c.key}", f"Preflight: {c.key}", "blocked", c.message))
+    else:
+        checks.append(Check("preflight", "Preflight", "pass", "no conflicts detected"))
+
+    data: dict = {
+        "dry_run": dry_run,
+        "confirm": confirm,
+        "task_id": task_id,
+        "current_worktree": plan.task_record.worktree_id if plan.task_record else None,
+        "conflicts": [{"key": c.key, "message": c.message} for c in plan.conflicts],
+        "would_proceed": not plan.has_conflict,
+    }
+
+    if plan.has_conflict:
+        data["action"] = "blocked"
+        exit_code = exit_codes.BLOCKED
+        summary = f"task unassign: blocked by {len(plan.conflicts)} conflict(s) (exit {exit_code})"
+        return _finish(repo_root, "task-unassign", checks, data, exit_code, summary, clock, write_log)
+
+    if dry_run:
+        data["action"] = "would_unassign"
+        checks.append(Check(
+            "write", "Task unassignment", "informational",
+            f"dry-run: would unassign worktree '{data['current_worktree']}' from task '{task_id}' - no file was written",
+        ))
+        exit_code = exit_codes.SUCCESS
+        summary = f"task unassign: dry-run, would unassign {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-unassign", checks, data, exit_code, summary, clock, write_log)
+
+    if not confirm:
+        data["action"] = "confirmation_required"
+        checks.append(Check(
+            "confirmation-required", "Confirmation required", "blocked",
+            "unassignment is a mutating operation - pass --confirm to execute, or --dry-run to preview with zero mutation",
+        ))
+        exit_code = exit_codes.BLOCKED
+        summary = f"task unassign: confirmation required for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-unassign", checks, data, exit_code, summary, clock, write_log)
+
+    outcome = apply_task_unassign(repo_root, plan, clock)
+    if not outcome.ok:
+        data["action"] = "unassignment_failed"
+        data["partial_state"] = outcome.partial_state
+        data["manual_recovery_recommendation"] = (
+            f"Inspect `{task_dir_for(repo_root, task_id)}/TASK.json` and the worktree registry directly - "
+            "ownership may be partially updated. forgeops does not retry or force-replace automatically; "
+            "resolve manually before retrying."
+        )
+        checks.append(Check("write", "Task unassignment", "fail", f"unassignment did not fully complete: {outcome.partial_state}"))
+        exit_code = exit_codes.COMMAND_EXECUTION_FAILURE
+        summary = f"task unassign: unassignment failed for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-unassign", checks, data, exit_code, summary, clock, write_log)
+
+    data["action"] = "unassigned"
+    data["index_written"] = outcome.index_written
+    checks.append(Check("write", "Task unassignment", "pass", f"unassigned worktree from task '{task_id}'"))
+    if not outcome.worktree_registry_written:
+        checks.append(Check(
+            "worktree-registry-note", "Worktree registry", "informational",
+            "no matching active worktree registry record was found to clear - only TASK.json was updated "
+            "(the worktree was likely removed independently)",
+        ))
+    if outcome.index_error:
+        data["index_error"] = outcome.index_error
+        checks.append(Check("index-write", "Task index write", "warning", f"unassignment succeeded but index was not updated: {outcome.index_error}"))
+        exit_code = exit_codes.WARNINGS_PRESENT
+    else:
+        checks.append(Check("index-write", "Task index write", "pass", "index updated"))
+        exit_code = exit_codes.SUCCESS
+    summary = f"task unassign: unassigned {task_id} (exit {exit_code})"
+    return _finish(repo_root, "task-unassign", checks, data, exit_code, summary, clock, write_log)
+
+
 # --- shared -----------------------------------------------------------------
 
 
@@ -505,6 +700,10 @@ def render_human(result: CommandResult) -> str:
         return _render_human_list(result)
     if result.command == "task-validate":
         return _render_human_validate(result)
+    if result.command == "task-assign":
+        return _render_human_assign(result)
+    if result.command == "task-unassign":
+        return _render_human_unassign(result)
     return _render_human_close(result)
 
 
@@ -548,7 +747,9 @@ def _render_human_show(result: CommandResult) -> str:
     lines.append(f"acceptance criteria: {sections.get('Acceptance Criteria', '(not read)')[:200]}")
     lines.append(f"required validation: {sections.get('Required Validation', '(not read)')[:200]}")
     lines.append(f"blockers: {task.get('blockers')}")
-    lines.append(f"worktree_id: {task.get('worktree_id')}  agent_id: {task.get('agent_id')}")
+    worktree_id = task.get("worktree_id")
+    ownership_state = "assigned" if worktree_id else "unassigned"
+    lines.append(f"assigned worktree: {worktree_id}  ownership: {ownership_state}  agent_id: {task.get('agent_id')}")
     lines.append(f"approval_state: {task.get('approval_state')}")
     lines.append(f"validation status: {validation.get('status')}")
     lines.append(f"result present: {d.get('result_present')}")
@@ -570,7 +771,7 @@ def _render_human_list(result: CommandResult) -> str:
             lines.append(
                 f"- {t['task_id']}: {t['title']} [{t['status']}] "
                 f"approval={t['approval_state']} validation={t['validation_state']} result={t['result_state']} "
-                f"worktree={t['worktree_id']} agent={t['agent_id']} updated={t['updated_at']}"
+                f"assigned_worktree={t['worktree_id']} agent={t['agent_id']} updated={t['updated_at']}"
             )
     return "\n".join(lines)
 
@@ -582,6 +783,42 @@ def _render_human_validate(result: CommandResult) -> str:
     d = result.data
     lines.append("")
     lines.append(f"task: {d.get('task_id')}  valid: {d.get('valid')}")
+    return "\n".join(lines)
+
+
+def _render_human_assign(result: CommandResult) -> str:
+    from forgeops.cli.render import render_checks
+    lines = ["forgeops task assign", f"summary: {result.summary}", ""]
+    lines.extend(render_checks(result.checks))
+    d = result.data
+    lines.append("")
+    lines.append(f"task: {d.get('task_id')}  worktree: {d.get('worktree_name')}")
+    lines.append(f"would proceed: {d.get('would_proceed')}")
+    if d.get("conflicts"):
+        lines.append("conflicts:")
+        for c in d["conflicts"]:
+            lines.append(f"  - {c['key']}: {c['message']}")
+    if d.get("partial_state") is not None:
+        lines.append(f"partial state after failure: {d['partial_state']}")
+        lines.append(f"recovery: {d.get('manual_recovery_recommendation')}")
+    return "\n".join(lines)
+
+
+def _render_human_unassign(result: CommandResult) -> str:
+    from forgeops.cli.render import render_checks
+    lines = ["forgeops task unassign", f"summary: {result.summary}", ""]
+    lines.extend(render_checks(result.checks))
+    d = result.data
+    lines.append("")
+    lines.append(f"task: {d.get('task_id')}  current worktree: {d.get('current_worktree')}")
+    lines.append(f"would proceed: {d.get('would_proceed')}")
+    if d.get("conflicts"):
+        lines.append("conflicts:")
+        for c in d["conflicts"]:
+            lines.append(f"  - {c['key']}: {c['message']}")
+    if d.get("partial_state") is not None:
+        lines.append(f"partial state after failure: {d['partial_state']}")
+        lines.append(f"recovery: {d.get('manual_recovery_recommendation')}")
     return "\n".join(lines)
 
 

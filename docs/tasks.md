@@ -1,9 +1,11 @@
-# Task Specification Engine (`forgeops task create|show|list|validate|close`)
+# Task Specification Engine (`forgeops task create|show|list|validate|close|assign|unassign`)
 
 A persistent, schema-controlled store for task intent, scope, acceptance
-criteria, validation expectations, and final outcome - kept outside
-conversational context under `.agent/tasks/`. This checkpoint
-implements only these five commands - see "Explicit non-goals" below.
+criteria, validation expectations, final outcome, and (since the Task
+Ownership checkpoint) worktree ownership - kept outside conversational
+context under `.agent/tasks/`. This checkpoint's ownership layer
+implements only assignment/unassignment of an *existing* managed
+worktree to an *existing* task - see "Explicit non-goals" below.
 
 ## Commands
 
@@ -28,6 +30,15 @@ forgeops task close TASK_ID [--repo PATH] --result-file FILE
 forgeops task close TASK_ID [--repo PATH] --dry-run
 forgeops task close TASK_ID [--repo PATH] --confirm
 forgeops task close TASK_ID [--repo PATH] --json
+
+forgeops task assign TASK_ID WORKTREE_NAME [--repo PATH]
+forgeops task assign TASK_ID WORKTREE_NAME [--repo PATH] --dry-run
+forgeops task assign TASK_ID WORKTREE_NAME [--repo PATH] --json
+
+forgeops task unassign TASK_ID [--repo PATH]
+forgeops task unassign TASK_ID [--repo PATH] --dry-run
+forgeops task unassign TASK_ID [--repo PATH] --confirm
+forgeops task unassign TASK_ID [--repo PATH] --json
 ```
 
 `forgeops task` with no subcommand is a plain argparse usage error
@@ -148,11 +159,13 @@ Criteria section, an unresolvable accepted checkpoint, ...) is surfaced
 as a warning check (`WARNINGS_PRESENT`), never a refusal - `task show`
 is for humans/agents to *see* problems, `task validate`/`task close`
 are where they actually block something. JSON output exposes the full
-`TASK.json` fields, parsed SPEC.md sections, `VALIDATION.json`, and
-RESULT.md presence/content; nothing raw or secret-shaped is ever
-printed (every managed artifact is already scanned before it's written,
-and free-text fields are additionally passed through
-`forgeops.security.redact.redact_text` as defense in depth).
+`TASK.json` fields (including `worktree_id`), parsed SPEC.md sections,
+`VALIDATION.json`, and RESULT.md presence/content; nothing raw or
+secret-shaped is ever printed (every managed artifact is already
+scanned before it's written, and free-text fields are additionally
+passed through `forgeops.security.redact.redact_text` as defense in
+depth). Human output includes an explicit `assigned worktree: <name or
+None>  ownership: assigned|unassigned` line - see "Ownership" below.
 
 ## Task list
 
@@ -165,7 +178,8 @@ refusal. Also detects (never repairs) two drift conditions, each a
 `WARNINGS_PRESENT`-level warning: a **stale index entry** (indexed, but
 its directory no longer exists) and an **unindexed directory** (a
 `task-NNNN`-shaped directory on disk with no index record) - mirroring
-`worktree list`'s own stale-registry-entry detection.
+`worktree list`'s own stale-registry-entry detection. Each human-output
+row includes `assigned_worktree=<name or None>`.
 
 ## Task validate
 
@@ -251,6 +265,127 @@ automatically, never force-replaced.
 
 `task close` never deletes the task directory, in success or failure.
 
+## Ownership (`forgeops task assign`/`forgeops task unassign`)
+
+Assignment links an *existing* task to an *existing*, active,
+unassigned ForgeOps-managed worktree - one-to-one in both directions.
+It never creates a worktree, never assigns an agent, never touches
+approvals, and never runs project tests or Git commands beyond the
+read-only `git worktree list` already used for eligibility checks.
+
+**Stored only through the two records already reserved for this**
+(`forgeops/state/task_ownership.py`) - no secondary ownership database:
+
+- `TASK.json.worktree_id` (`forgeops/state/task_registry.py`, present
+  and always `null` since `task create` was implemented);
+- `.agent/runtime/WORKTREE_REGISTRY.json`'s per-record `task_id`
+  (`forgeops/state/worktree_registry.py`, present and always `null`
+  since `worktree create` was implemented).
+
+`TASK_INDEX.json`'s own `worktree_id` summary field remains bookkeeping
+only, exactly as `task create`/`task close` already treat every field
+there - never the source of truth.
+
+### Assignment preflight
+
+`forgeops/state/task_ownership.py:build_task_assign_plan` is read-only,
+shared by `--dry-run` and a real run (and re-run verbatim by
+`apply_task_assign` immediately before mutating, closing the
+preflight/apply TOCTOU gap). Deliberately narrower than `task
+validate`'s own structural check - a `draft` task with placeholder
+Acceptance Criteria is a perfectly normal, eligible assignment target;
+only identity and ownership matter here:
+
+- task exists, is schema-valid, and its own identity is trustworthy
+  (`task-not-found` / `duplicate-task-id` / `task-json-malformed` /
+  `task-id-mismatch` / `task-project-root-mismatch`);
+- worktree exists and its registry entry is valid
+  (`worktree-not-found` / `duplicate-worktree-registry-entry` /
+  `worktree-registry-malformed`);
+- worktree has not been removed (`worktree-removed`) and is not the
+  configured read-only reference repository (`worktree-protected-path`);
+- worktree is still a real, unlocked Git worktree whose branch still
+  matches the registry (`worktree-stale` / `worktree-locked` /
+  `worktree-identity-mismatch` - the same live-state checks `worktree
+  remove` already performs);
+- task status is not already `completed`/`failed`/`cancelled`
+  (`task-already-terminal`);
+- task is not already assigned (`task-already-assigned`) and the
+  worktree is not already assigned to a *different* task
+  (`worktree-already-assigned`) - the one-to-one invariant.
+
+`--dry-run` runs the identical preflight, never mutates, and returns
+the same exit code a real run would.
+
+### Assignment mechanics
+
+No `--confirm` gate - unlike `task close`/`worktree remove`, assignment
+is additive and trivially reversible (`task unassign` undoes it; nothing
+is deleted), so it follows `task create`/`worktree create`'s
+no-confirm-needed shape instead. A bare `forgeops task assign TASK_ID
+WORKTREE_NAME` mutates immediately once preflight passes.
+
+`TASK.json` and the worktree's registry record are updated as one
+atomic pair - both are equally authoritative for ownership, so if the
+second write fails after the first succeeded, the first is rolled back
+(best-effort) and the whole call reports `COMMAND_EXECUTION_FAILURE`
+with `data.partial_state` and a manual recovery recommendation, never a
+partial assignment. `TASK_INDEX.json` is updated last; its own failure
+is `WARNINGS_PRESENT`, mirroring exactly how `task create`/`task close`
+already treat an index-write failure after the real action succeeded.
+
+### Unassignment
+
+Mirrors `task close`'s confirmation model: without `--confirm`, full
+preflight and zero mutation (`BLOCKED`,
+`data.action == "confirmation_required"`); `--dry-run` needs no
+`--confirm`, never mutates, reports the exact planned state. A task
+with no current assignment is itself a preflight conflict
+(`task-not-assigned`) - unassigning twice is refused, never a silent
+no-op.
+
+Confirmed unassignment clears `TASK.json.worktree_id` back to `null`
+and (if a matching registry record still exists) clears its `task_id`
+back to `null` too - the same atomic-pair/index-last model as
+assignment. If the worktree was independently removed via `worktree
+remove` in the meantime (which never touches a task's ownership
+itself - see "Removing an assigned worktree" below), there is no
+registry record left to clear; that is reported plainly via
+`data` rather than treated as a failure, since `TASK.json` is still
+fully, correctly cleared. Never deletes or moves the worktree itself.
+
+### Removing an assigned worktree
+
+`forgeops worktree remove` is intentionally **not** modified by this
+checkpoint - it still removes a worktree regardless of task assignment,
+and does not clear the task's `worktree_id` itself. The resulting
+orphaned ownership (`TASK.json` still pointing at a worktree that is
+now `removed`) is exactly what `task validate`'s ownership checks exist
+to catch - see below. Run `forgeops task unassign` before `forgeops
+worktree remove` to keep ownership consistent proactively, or `forgeops
+task validate`/`forgeops task unassign` afterward to detect and clear
+it.
+
+### Ownership consistency checks (extends `task validate`)
+
+`forgeops/state/task_validate.py:_check_ownership_consistency` adds
+these blockers to every `task validate TASK_ID` run (and therefore to
+`task close`'s own preflight, which reuses `validate_task`):
+
+| Check | Meaning |
+|---|---|
+| `worktree-missing` | `TASK.json.worktree_id` is set but no such worktree is registered at all. |
+| `worktree-removed` | The referenced worktree exists but its registry status is `removed`. |
+| `ownership-mismatch` | The referenced worktree's registry record claims a *different* task. |
+| `orphan-task-ownership` | The referenced worktree's registry record claims no task at all. |
+| `orphan-registry-ownership` | A worktree's registry record claims this task, but this task's own `worktree_id` is `null`. |
+| `duplicate-assignment` | More than one active worktree claims this same task. |
+| `worktree-id-schema-mismatch` | `TASK.json.worktree_id` is set but is not a validly-formed worktree name. |
+| `worktree-registry-malformed` | `.agent/runtime/WORKTREE_REGISTRY.json` itself could not be read safely - fails closed, same as everywhere else. |
+
+Purely read-only - never repairs anything it finds, never mutates,
+never runs project tests.
+
 ## Status transitions (this checkpoint)
 
 ```
@@ -273,19 +408,22 @@ checkpoints.
 - `REPO_NOT_FOUND` (4) / `COMMAND_EXECUTION_FAILURE` (5, git
   unavailable) as every other command.
 - `BLOCKED` (2) - the read-only reference repository; an uninitialized
-  project; any `task create`/`task close` preflight conflict; missing
-  `--confirm` on a non-dry-run `task close`; `task show`/`task validate`
-  given a task ID that cannot be located at all; any blocking finding
-  from `task validate`.
-- `COMMAND_EXECUTION_FAILURE` (5) - a `task create`/`task close` write
-  genuinely fails partway through (partial state detected and reported,
-  already-created paths rolled back where safe).
-- `WARNINGS_PRESENT` (1) - `task create`/`task close` succeeded but the
-  index update failed; `task list` found a stale/unindexed entry or a
-  malformed index; `task show` found any non-fatal consistency issue;
-  `task validate` found only warnings (no blockers).
+  project; any `task create`/`task close`/`task assign`/`task unassign`
+  preflight conflict; missing `--confirm` on a non-dry-run `task
+  close`/`task unassign`; `task show`/`task validate` given a task ID
+  that cannot be located at all; any blocking finding from `task
+  validate` (including the ownership-consistency checks).
+- `COMMAND_EXECUTION_FAILURE` (5) - a `task create`/`task close`/`task
+  assign`/`task unassign` write genuinely fails partway through
+  (partial state detected and reported, already-created/already-updated
+  paths rolled back where safe).
+- `WARNINGS_PRESENT` (1) - `task create`/`task close`/`task
+  assign`/`task unassign` succeeded but the index update failed; `task
+  list` found a stale/unindexed entry or a malformed index; `task show`
+  found any non-fatal consistency issue; `task validate` found only
+  warnings (no blockers).
 - `SUCCESS` (0) - otherwise, including a conflict-free `--dry-run` for
-  either mutating command.
+  any mutating command.
 
 ## Secret handling
 
@@ -300,11 +438,12 @@ directly outside the CLI.
 
 ## Explicit non-goals (this checkpoint)
 
-No agent assignment, no agent execution, no parallel task routing, no
-automatic worktree creation, no approvals workflow, no merge
-orchestration, no MCP, no notifications, no deployment, no Rocky
-integration, no task editing, no reopening, no arbitrary status
-changes, no task deletion. `worktree_id`/`agent_id` exist in the schema
-for a later checkpoint to populate, exactly like
-`forgeops/state/worktree_registry.py`'s own `task_id`/`agent_id` fields
-did for this one.
+No automatic worktree creation (assignment only ever links to an
+*existing* worktree), no agent assignment, no agent execution, no
+parallel task routing, no approvals workflow, no merge orchestration,
+no MCP, no notifications, no deployment, no Rocky integration, no task
+editing, no reopening, no arbitrary status changes, no task deletion,
+no `worktree remove`/branch/Git-ownership changes of any kind (task
+ownership is a ForgeOps-level link only, never touching Git itself).
+`agent_id` still exists in the schema for a later checkpoint to
+populate, exactly like `worktree_id` did for this one.

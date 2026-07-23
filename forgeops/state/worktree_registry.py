@@ -48,6 +48,11 @@ class WorktreeRecord:
     status: str = STATUS_ACTIVE
     task_id: str | None = None
     agent_id: str | None = None
+    # Set at creation and whenever `task_id`/`agent_id` change (currently
+    # only `forgeops task assign`/`task unassign` - see
+    # forgeops/state/task_ownership.py). `None` on any record predating
+    # this field, which is always backward-compatible to read.
+    updated_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +65,7 @@ class WorktreeRecord:
             "status": self.status,
             "task_id": self.task_id,
             "agent_id": self.agent_id,
+            "updated_at": self.updated_at,
         }
 
     @staticmethod
@@ -74,6 +80,7 @@ class WorktreeRecord:
             status=str(data.get("status", STATUS_ACTIVE)),
             task_id=data.get("task_id"),
             agent_id=data.get("agent_id"),
+            updated_at=data.get("updated_at"),
         )
 
 

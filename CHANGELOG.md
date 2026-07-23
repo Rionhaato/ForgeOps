@@ -6,6 +6,66 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Task Ownership
+- Implemented `forgeops task assign TASK_ID WORKTREE_NAME` (mutating,
+  no `--confirm` required - only `--dry-run` - mirroring `task
+  create`/`worktree create`'s additive, easily-reversed shape) and
+  `forgeops task unassign TASK_ID` (mutating, confirmation-gated via
+  `--confirm`, `--dry-run` supported, mirroring `task close`/`worktree
+  remove` instead). Deliberately implements only linking an *existing*
+  task to an *existing* worktree - no automatic worktree creation, no
+  agent assignment, no approvals, no task execution/routing, no
+  parallel execution, no merges, no MCP, no Rocky integration, no
+  deployment - see `docs/tasks.md` "Explicit non-goals".
+- Ownership is one-to-one and stored only through the two fields
+  already reserved for it in the existing schemas -
+  `TASK.json.worktree_id` and `WORKTREE_REGISTRY.json`'s per-record
+  `task_id` (both previously always `null`) - no secondary ownership
+  database. `WorktreeRecord` gains an `updated_at` field (also now
+  populated by `worktree create`), set whenever `task_id`/`agent_id`
+  change; backward-compatible (`null`) on any pre-existing record.
+- Assignment preflight (`forgeops/state/task_ownership.py:build_task_assign_plan`,
+  shared by `--dry-run` and a real run, and re-run verbatim immediately
+  before mutating to close the TOCTOU gap) verifies: task exists and is
+  schema-valid; worktree exists and its registry entry is valid; the
+  worktree has not been removed, is not locked, is not the protected
+  reference repository, and its Git identity still matches the
+  registry (the same live-state checks `worktree remove` already
+  performs); the task is not `completed`/`failed`/`cancelled`; neither
+  the task nor the worktree is already assigned to something else.
+- Assignment updates `TASK.json` and the worktree's registry record as
+  one atomic pair - both are equally authoritative for ownership, so a
+  failure on the second write after the first succeeded rolls the first
+  back (best-effort) and reports `COMMAND_EXECUTION_FAILURE` with
+  `partial_state` and a manual recovery recommendation, never a partial
+  assignment. `TASK_INDEX.json` remains bookkeeping only, updated last;
+  its own failure is `WARNINGS_PRESENT`, mirroring `task create`/`task
+  close`'s established registry-write-failure pattern.
+- Unassignment mirrors `task close`'s confirmation model exactly
+  (preflight-only without `--confirm`, zero-mutation `--dry-run`). A
+  task with no current assignment is itself a preflight conflict
+  (`task-not-assigned`) - double-unassigning is refused, never a silent
+  no-op. If the worktree was independently removed via `worktree
+  remove` since assignment (which never clears ownership itself - see
+  below), `TASK.json` is still correctly cleared even with no matching
+  registry record left to clear, reported plainly rather than as a
+  failure.
+- `forgeops worktree remove` is deliberately unchanged - it still
+  removes a worktree regardless of task assignment and never clears the
+  task's `worktree_id` itself. The resulting orphaned ownership is
+  exactly what the new `task validate` checks below exist to catch.
+- Extended `forgeops task validate` (and therefore `task close`'s own
+  preflight, which reuses it) with eight ownership-consistency checks,
+  all blockers, all read-only: `worktree-missing`, `worktree-removed`,
+  `ownership-mismatch`, `orphan-task-ownership`,
+  `orphan-registry-ownership`, `duplicate-assignment`,
+  `worktree-id-schema-mismatch`, `worktree-registry-malformed`.
+- `task show`/`task list` human output now explicitly states ownership:
+  `show` gains an `assigned worktree: <name>  ownership:
+  assigned|unassigned` line; each `list` row gains `assigned_worktree=`.
+  JSON output already exposed `worktree_id` via the existing `TASK.json`
+  field pass-through - unchanged.
+
 ### Persistent Task Specifications
 - Implemented a persistent, schema-controlled Task Specification
   Engine: `forgeops task create|show|list|validate|close`, storing task

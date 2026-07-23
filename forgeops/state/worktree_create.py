@@ -215,14 +215,16 @@ def apply_worktree_create(repo_root: Path, plan: WorktreeCreatePlan, clock: Cloc
             partial_state=partial_state, registry_written=False, registry_error=None,
         )
 
+    now = iso_now(clock)
     record = WorktreeRecord(
         id=uuid4().hex,
         name=plan.sanitized_name or plan.name_arg,
         path=str(plan.worktree_path),
         branch=plan.branch,
         base_commit=plan.base_commit,
-        created_at=iso_now(clock),
+        created_at=now,
         status=STATUS_ACTIVE,
+        updated_at=now,
     )
 
     registry_written = False

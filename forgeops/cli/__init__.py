@@ -138,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="also delete the ForgeOps-owned branch via a normal, non-force `git branch -d` (requires --confirm)",
     )
 
-    task_sub = subparsers.add_parser("task", help="forgeops task create | show | list | validate | close")
+    task_sub = subparsers.add_parser("task", help="forgeops task create | show | list | validate | close | assign | unassign")
     task_subparsers = task_sub.add_subparsers(dest="task_command", required=True)
 
     task_create_sub = task_subparsers.add_parser("create", help="forgeops task create TITLE")
@@ -171,6 +171,20 @@ def build_parser() -> argparse.ArgumentParser:
     task_close_sub.add_argument("--result-file", dest="result_file", default=None, help="path to a local file whose content becomes RESULT.md verbatim")
     task_close_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show the planned state transition, mutate nothing")
     task_close_sub.add_argument("--confirm", action="store_true", help="actually perform the closure (required unless --dry-run)")
+
+    task_assign_sub = task_subparsers.add_parser("assign", help="forgeops task assign TASK_ID WORKTREE_NAME")
+    task_assign_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_assign_sub.add_argument("worktree_name", help="name of an existing, active, unassigned ForgeOps-managed worktree")
+    task_assign_sub.add_argument("--repo", default=None)
+    task_assign_sub.add_argument("--json", action="store_true")
+    task_assign_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be assigned, mutate nothing")
+
+    task_unassign_sub = task_subparsers.add_parser("unassign", help="forgeops task unassign TASK_ID")
+    task_unassign_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_unassign_sub.add_argument("--repo", default=None)
+    task_unassign_sub.add_argument("--json", action="store_true")
+    task_unassign_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be unassigned, mutate nothing")
+    task_unassign_sub.add_argument("--confirm", action="store_true", help="actually perform the unassignment (required unless --dry-run)")
 
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
@@ -263,6 +277,10 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
             return task_cmd.run_task_list(args.repo, status_filter=args.status_filter)
         if args.task_command == "validate":
             return task_cmd.run_task_validate(args.task_id, args.repo)
+        if args.task_command == "assign":
+            return task_cmd.run_task_assign(args.task_id, args.worktree_name, args.repo, dry_run=args.dry_run)
+        if args.task_command == "unassign":
+            return task_cmd.run_task_unassign(args.task_id, args.repo, dry_run=args.dry_run, confirm=args.confirm)
         return task_cmd.run_task_close(
             args.task_id, args.repo, dry_run=args.dry_run, confirm=args.confirm, result_file=args.result_file,
         )

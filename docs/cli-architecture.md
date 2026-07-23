@@ -21,7 +21,7 @@ forgeops/
     resume_context.py           forgeops resume-context (read-only, bounded-size compact resume summary)
     init.py                      forgeops init [PATH] (safe, deterministic project bootstrap - see docs/project-init.md)
     worktree.py                   forgeops worktree list | create | remove (safe Git worktree inspection/creation/removal - see docs/worktrees.md)
-    task.py                       forgeops task create | show | list | validate | close (persistent Task Specification Engine - see docs/tasks.md)
+    task.py                       forgeops task create | show | list | validate | close | assign | unassign (persistent Task Specification Engine + ownership - see docs/tasks.md)
   core/
     paths.py             repo-root discovery, path normalization, read-only reference repository protection
     git.py                read-only git-state inspection (status entries, renames, ahead/behind, ...)
@@ -56,6 +56,7 @@ forgeops/
     task_create.py                   pure preflight-plan builder and single mutating writer for `forgeops task create`
     task_validate.py                  read-only structural/consistency check shared by `task validate` and `task close`'s own preflight
     task_close.py                      pure preflight-plan builder and single mutating apply step for `forgeops task close`
+    task_ownership.py                   pure preflight-plan builders and mutating apply steps for `forgeops task assign`/`forgeops task unassign` (see docs/tasks.md "Ownership")
   worktrees/
     naming.py                NAME validation, deterministic branch-name/managed-root/path derivation
     git_worktree.py            git worktree list/add plumbing - tolerant porcelain parsing, no shell interpolation
@@ -101,20 +102,27 @@ dispatches on `result.command` (`"worktree-list"` / `"worktree-create"`
 / `"worktree-remove"`) - see docs/worktrees.md for the managed root,
 branch-naming rule, conflict model, registry, and removal
 eligibility/confirmation model this implements. `task.py` (the fourth
-mutating exception - `task create`/`task close` mutate, `task
-show`/`task list`/`task validate` don't - and the first five-subcommand
-module) exposes `run_task_create`, `run_task_show`, `run_task_list`,
-`run_task_validate`, and `run_task_close`, sharing one `render_human`
-dispatching on `result.command` (`"task-create"` / `"task-show"` /
-`"task-list"` / `"task-validate"` / `"task-close"`). All five share a
-single repo-level gate (`_repo_level_block`) that every other worktree/
-init command doesn't need: a protected-reference-repo check identical
-to the others, plus a new one - the target must already be an
-initialized ForgeOps project (`.agent/CURRENT_STATE.json` present and
-schema-valid) - since the Task Specification Engine has nowhere safe to
-persist state otherwise. See `docs/tasks.md` for the task directory
-contract, ID generation, lifecycle, validation-artifact model, and
-closure's confirmation/atomicity model. `run_*` never touches `sys.argv`,
+mutating exception - `task create`/`task close`/`task assign`/`task
+unassign` mutate, `task show`/`task list`/`task validate` don't - and
+the first seven-subcommand module) exposes `run_task_create`,
+`run_task_show`, `run_task_list`, `run_task_validate`,
+`run_task_close`, `run_task_assign` (accepting `dry_run: bool = False`
+only - no `--confirm`, mirroring `task create`/`worktree create`'s own
+additive, easily-reversed shape rather than a destructive one), and
+`run_task_unassign` (accepting `dry_run: bool = False`, `confirm: bool
+= False`, mirroring `task close`/`worktree remove` instead), sharing
+one `render_human` dispatching on `result.command` (`"task-create"` /
+`"task-show"` / `"task-list"` / `"task-validate"` / `"task-close"` /
+`"task-assign"` / `"task-unassign"`). All seven share a single
+repo-level gate (`_repo_level_block`) that every other worktree/init
+command doesn't need: a protected-reference-repo check identical to the
+others, plus a new one - the target must already be an initialized
+ForgeOps project (`.agent/CURRENT_STATE.json` present and schema-valid)
+- since the Task Specification Engine has nowhere safe to persist state
+otherwise. See `docs/tasks.md` for the task directory contract, ID
+generation, lifecycle, validation-artifact model, closure's
+confirmation/atomicity model, and the ownership layer's one-to-one
+model shared with `forgeops/state/worktree_registry.py`. `run_*` never touches `sys.argv`,
 `print`, or `sys.exit` — it's a pure function over its arguments, which is
 what makes it directly unit-testable (see `tests/integration/test_cli_*.py`)
 without spawning a subprocess. `main()` in `forgeops/cli/__init__.py` is
@@ -252,13 +260,14 @@ Only a genuinely unexpected exception (a real bug) is caught here:
   without `--targeted` or `--full` behaves the same way. `checkpoint`,
   `handoff`, `process-list`, `cleanup`, `init`, `worktree list`/
   `worktree create`/`worktree remove`, and `task create`/`task show`/
-  `task list`/`task validate`/`task close` are now implemented (see
-  `docs/checkpoint-and-handoff.md`, `docs/process-list-and-cleanup.md`,
-  `docs/project-init.md`, `docs/worktrees.md`, `docs/tasks.md`).
-  `worktree prune`, bulk/forced removal, merge orchestration, agent
-  assignment/execution, parallel task routing, and an approvals
-  workflow all remain unimplemented - see `docs/worktrees.md` and
-  `docs/tasks.md` "Explicit non-goals". See `docs/phase2c-validation.md`
+  `task list`/`task validate`/`task close`/`task assign`/`task
+  unassign` are now implemented (see `docs/checkpoint-and-handoff.md`,
+  `docs/process-list-and-cleanup.md`, `docs/project-init.md`,
+  `docs/worktrees.md`, `docs/tasks.md`). `worktree prune`, bulk/forced
+  removal, merge orchestration, agent assignment/execution, parallel
+  task routing, automatic worktree creation, and an approvals workflow
+  all remain unimplemented - see `docs/worktrees.md` and `docs/tasks.md`
+  "Explicit non-goals". See `docs/phase2c-validation.md`
   for prior recommended-next-scope notes.
 - Process discovery (`forgeops/detectors/processes.py`) is Windows-only
   today - `forgeops process-list`/`forgeops cleanup` report a clear

@@ -39,6 +39,13 @@ from forgeops.state.task_spec import (
     missing_required_headings,
     parse_markdown_sections,
 )
+from forgeops.state.worktree_registry import (
+    REGISTRY_RELATIVE_PATH as WORKTREE_REGISTRY_RELATIVE_PATH,
+    STATUS_ACTIVE as WORKTREE_STATUS_ACTIVE,
+    STATUS_REMOVED as WORKTREE_STATUS_REMOVED,
+    load_registry as load_worktree_registry,
+)
+from forgeops.worktrees.naming import validate_worktree_name
 
 SEVERITY_BLOCKER = "blocker"
 SEVERITY_WARNING = "warning"
@@ -190,6 +197,8 @@ def validate_task(
             issues.append(TaskIssue("invalid-approval-state", f"TASK.json approval_state '{task_record.approval_state}' is not recognized", SEVERITY_BLOCKER))
         if task_record.worktree_id is not None and not isinstance(task_record.worktree_id, str):
             issues.append(TaskIssue("invalid-worktree-field", "TASK.json worktree_id must be null or a string", SEVERITY_BLOCKER))
+        else:
+            issues.extend(_check_ownership_consistency(repo_root, task_id, task_record))
         if task_record.agent_id is not None and not isinstance(task_record.agent_id, str):
             issues.append(TaskIssue("invalid-agent-field", "TASK.json agent_id must be null or a string", SEVERITY_BLOCKER))
 
@@ -249,3 +258,85 @@ def validate_task(
         validation_record=validation_record, spec_text=spec_text, result_text=result_text,
         in_index=in_index, issues=tuple(issues),
     )
+
+
+def _check_ownership_consistency(repo_root: Path, task_id: str, task_record: TaskRecord) -> list[TaskIssue]:
+    """Cross-checks `TASK.json.worktree_id` against
+    `WORKTREE_REGISTRY.json` in both directions - see
+    `forgeops/state/task_ownership.py` for how `task assign`/`task
+    unassign` keep the two in sync, and docs/tasks.md "Ownership" for
+    the one-to-one model this verifies. Read-only; never repairs
+    anything it finds inconsistent."""
+    issues: list[TaskIssue] = []
+
+    registry = load_worktree_registry(repo_root)
+    if registry.warning is not None:
+        issues.append(TaskIssue(
+            "worktree-registry-malformed",
+            f"{WORKTREE_REGISTRY_RELATIVE_PATH} could not be read safely: {registry.warning}",
+            SEVERITY_BLOCKER,
+        ))
+        return issues
+
+    worktree_id = task_record.worktree_id
+    if worktree_id is not None:
+        name_error = validate_worktree_name(worktree_id)
+        if name_error is not None:
+            issues.append(TaskIssue(
+                "worktree-id-schema-mismatch",
+                f"TASK.json worktree_id '{worktree_id}' is not a validly-formed worktree name: {name_error}",
+                SEVERITY_BLOCKER,
+            ))
+            worktree_id = None  # not safely usable for the lookups below
+        else:
+            matches = [r for r in registry.records if r.name == worktree_id]
+            if not matches:
+                issues.append(TaskIssue(
+                    "worktree-missing",
+                    f"task references worktree '{worktree_id}' which is not registered in {WORKTREE_REGISTRY_RELATIVE_PATH}",
+                    SEVERITY_BLOCKER,
+                ))
+            else:
+                record = matches[0]
+                if record.status == WORKTREE_STATUS_REMOVED:
+                    issues.append(TaskIssue(
+                        "worktree-removed",
+                        f"task references worktree '{worktree_id}' which has been removed",
+                        SEVERITY_BLOCKER,
+                    ))
+                elif record.task_id is None:
+                    issues.append(TaskIssue(
+                        "orphan-task-ownership",
+                        f"task claims worktree '{worktree_id}' but the worktree registry does not reciprocally claim this task",
+                        SEVERITY_BLOCKER,
+                    ))
+                elif record.task_id != task_id:
+                    issues.append(TaskIssue(
+                        "ownership-mismatch",
+                        f"task claims worktree '{worktree_id}' but the worktree registry says it belongs to task '{record.task_id}'",
+                        SEVERITY_BLOCKER,
+                    ))
+
+    # Bidirectional: does any active worktree claim this task without
+    # the task reciprocating (or reciprocating a different worktree)?
+    claiming = [r for r in registry.records if r.status == WORKTREE_STATUS_ACTIVE and r.task_id == task_id]
+    if len(claiming) > 1:
+        issues.append(TaskIssue(
+            "duplicate-assignment",
+            f"more than one active worktree claims task '{task_id}': {', '.join(sorted(r.name for r in claiming))}",
+            SEVERITY_BLOCKER,
+        ))
+    elif len(claiming) == 1 and worktree_id is None:
+        issues.append(TaskIssue(
+            "orphan-registry-ownership",
+            f"worktree '{claiming[0].name}' claims task '{task_id}' but the task's own worktree_id is null",
+            SEVERITY_BLOCKER,
+        ))
+    elif len(claiming) == 1 and worktree_id != claiming[0].name:
+        issues.append(TaskIssue(
+            "duplicate-assignment",
+            f"worktree '{claiming[0].name}' claims task '{task_id}' while the task itself is assigned to a different worktree ('{worktree_id}')",
+            SEVERITY_BLOCKER,
+        ))
+
+    return issues

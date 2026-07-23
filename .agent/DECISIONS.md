@@ -601,3 +601,57 @@ Three deliberate choices made building `forgeops task create|show|list|validate|
 
 See `docs/tasks.md` for the full command/exit-code/lifecycle contract
 this codifies.
+
+## 2026-07-23 — Task Ownership: `task assign` skips `--confirm`, `worktree remove` stays untouched, and ownership is an atomic two-record pair with `TASK_INDEX.json` still just bookkeeping
+
+Four deliberate choices building `forgeops task assign|unassign`:
+
+1. `task assign` has no `--confirm` gate - only `--dry-run` - unlike
+   `task close`/`task unassign`/`worktree remove`. This checkpoint's own
+   instructions gave `task assign` exactly three command forms (bare,
+   `--dry-run`, `--json`) with no confirmation flag anywhere in its
+   section, while `task unassign`'s own section explicitly says
+   "requires confirmation model consistent with other mutating
+   commands." Read literally and consistently: assignment is additive
+   and trivially reversible (`task unassign` undoes it; nothing is
+   deleted, moved, or made terminal), so it follows `task create`/
+   `worktree create`'s no-confirm-needed shape; unassignment reverses an
+   established link and follows `task close`/`worktree remove`'s
+   confirm-gated shape instead. Documented explicitly in `docs/tasks.md`
+   "Assignment mechanics" so the asymmetry reads as intentional, not an
+   oversight.
+2. `forgeops worktree remove` was **not** modified to check or clear
+   task ownership, even though an assigned worktree can now be removed
+   out from under a task. The checkpoint's own instruction list didn't
+   include `worktree_remove.py` among files to touch, and "orphan task
+   ownership" is explicitly one of the conditions `task validate` is
+   asked to detect - implying the intended design is detection after
+   the fact (via the new ownership-consistency checks), not prevention
+   at the worktree layer. Keeps this checkpoint's blast radius to
+   exactly the two new commands plus `task validate`'s read-only
+   extension, per its "Implement ONLY persistent task ownership"
+   framing.
+3. Ownership is stored **only** through the two fields
+   `forgeops/state/worktree_registry.py:WorktreeRecord`
+   (`task_id`) and `forgeops/state/task_registry.py:TaskRecord`
+   (`worktree_id`) already reserved for exactly this purpose since the
+   Safe Git Worktree Foundation and Persistent Task Specifications
+   checkpoints respectively - both explicitly documented at the time as
+   "for a later checkpoint to populate." No new `assigned_task_id` field
+   was introduced despite that literal wording appearing in this
+   checkpoint's own brief - the existing `task_id` field already means
+   exactly that, and adding a second field for the same concept would
+   be the "secondary ownership database" the brief explicitly forbids.
+4. Both records are treated as equally authoritative and written as one
+   atomic pair (`forgeops/state/task_ownership.py`): if the second
+   write fails after the first succeeded, the first is rolled back and
+   the whole call reports failure - "never partially assign." `TASK_INDEX.json`
+   remains pure bookkeeping, exactly as `task create`/`task close`
+   already established - its own write failure after the authoritative
+   pair succeeded is `WARNINGS_PRESENT`, not a failure.
+
+`WorktreeRecord` also gained an `updated_at` field (populated at
+creation by `worktree create` and on every ownership change) since the
+checkpoint's brief asked for an "updated timestamp" on the registry
+side and none existed - a minor, backward-compatible (`None`-default)
+schema addition rather than overloading `created_at`.

@@ -127,15 +127,20 @@ safety properties. One record per created worktree:
     {
       "id": "…", "name": "demo", "path": "…", "branch": "forgeops/demo",
       "base_commit": "…", "created_at": "…", "status": "active",
-      "task_id": null, "agent_id": null
+      "task_id": null, "agent_id": null, "updated_at": "…"
     }
   ]
 }
 ```
 
-`task_id`/`agent_id` exist in the schema for a future checkpoint to
-populate; this checkpoint always writes them as `null`. Unlike the
-process registry (which skips an individual malformed record), **any**
+`task_id` is populated by `forgeops task assign`/`forgeops task
+unassign` (see docs/tasks.md "Ownership") - the Task Ownership
+checkpoint this field was originally reserved for. `agent_id` remains
+reserved for a future checkpoint, always `null` for now. `updated_at`
+(added by the same checkpoint) is set at creation and whenever
+`task_id`/`agent_id` change; `null` on any record predating this field,
+which is always backward-compatible to read. Unlike the process
+registry (which skips an individual malformed record), **any**
 unreadable record marks the *whole* registry malformed - worktree
 conflict-detection needs "no matching record" to reliably mean "no
 matching record", not "one existed and was silently dropped". A
@@ -147,6 +152,16 @@ Stale entries (registered but no longer a real Git worktree - e.g. removed
 directly via `git worktree remove`) are detected and reported by
 `worktree list` as a warning; they are never automatically removed -
 that is explicit future scope, not this checkpoint's.
+
+**`worktree remove` does not clear task ownership.** Removing a
+worktree that is currently assigned to a task leaves that task's
+`TASK.json.worktree_id` pointing at a now-removed worktree - this is by
+design (see docs/tasks.md "Removing an assigned worktree"): `forgeops
+worktree remove`'s own scope is deliberately unchanged by the Task
+Ownership checkpoint, and the resulting orphaned ownership is exactly
+what `forgeops task validate`'s ownership-consistency checks exist to
+detect (never auto-repaired). Run `forgeops task unassign` first to
+keep ownership consistent proactively.
 
 ## Exit codes
 

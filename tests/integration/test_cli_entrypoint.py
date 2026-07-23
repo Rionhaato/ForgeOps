@@ -111,6 +111,33 @@ def test_python_dash_m_forgeops_task_lifecycle_real_execution(git_repo):
     assert "task-0001" in show_result.stdout
 
 
+def test_python_dash_m_forgeops_task_ownership_real_execution(git_repo):
+    init_result = _run_module(["init", str(git_repo)], cwd=git_repo)
+    assert init_result.returncode == 0
+
+    create_result = _run_module(["task", "create", "Owned Task", "--repo", str(git_repo)], cwd=git_repo)
+    assert create_result.returncode == 0
+
+    worktree_result = _run_module(["worktree", "create", "demo", "--repo", str(git_repo)], cwd=git_repo)
+    assert worktree_result.returncode == 0
+
+    assign_result = _run_module(["task", "assign", "task-0001", "demo", "--repo", str(git_repo)], cwd=git_repo)
+    assert assign_result.returncode == 0
+    assert "forgeops task assign" in assign_result.stdout
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["worktree_id"] == "demo"
+
+    no_confirm = _run_module(["task", "unassign", "task-0001", "--repo", str(git_repo)], cwd=git_repo)
+    assert no_confirm.returncode == 2  # BLOCKED: confirmation required
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["worktree_id"] == "demo"
+
+    unassign_result = _run_module(["task", "unassign", "task-0001", "--repo", str(git_repo), "--confirm"], cwd=git_repo)
+    assert unassign_result.returncode == 0
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["worktree_id"] is None
+
+
 def test_python_dash_m_forgeops_invalid_repo_path_exit_code(tmp_path):
     result = _run_module(["status", "--repo", str(tmp_path / "nope")], cwd=tmp_path)
     assert result.returncode == 4  # REPO_NOT_FOUND

@@ -143,23 +143,31 @@ Per-command specifics:
   force-deletes a branch, never deletes a remote branch. See
   `docs/worktrees.md`.
 
-- **`task create`/`task show`/`task list`/`task validate`/`task close`**:
+- **`task create`/`task show`/`task list`/`task validate`/`task close`/
+  `task assign`/`task unassign`**:
   `REPO_NOT_FOUND` (4) / `COMMAND_EXECUTION_FAILURE` (5, git
   unavailable) as above; `BLOCKED` (2) for the read-only reference
   repository, an uninitialized project (`.agent/CURRENT_STATE.json`
   missing/invalid - every task command requires one, checked by a
-  single shared gate), any `task create`/`task close` preflight
-  conflict, `--confirm` missing on a non-dry-run `task close`, `task
-  show`/`task validate` given a task ID that cannot be located at all,
-  or any blocking finding from `task validate` itself; `COMMAND_EXECUTION_FAILURE`
-  (5) also if a `task create`/`task close` write genuinely fails
-  partway through (already-created paths rolled back where safe -
-  see `docs/tasks.md`); otherwise `WARNINGS_PRESENT` (1) if
-  `task create`/`task close` succeeded but its `TASK_INDEX.json` update
+  single shared gate), any `task create`/`task close`/`task
+  assign`/`task unassign` preflight conflict (assignment's own
+  eligibility conflicts include the task/worktree not existing, either
+  already being assigned, a removed/locked/stale/protected worktree, or
+  a terminal task - see `docs/tasks.md` "Ownership"), `--confirm`
+  missing on a non-dry-run `task close`/`task unassign` (`task assign`
+  itself needs no `--confirm`, only `--dry-run`), `task show`/`task
+  validate` given a task ID that cannot be located at all, or any
+  blocking finding from `task validate` itself (including its
+  ownership-consistency checks); `COMMAND_EXECUTION_FAILURE`
+  (5) also if a `task create`/`task close`/`task assign`/`task
+  unassign` write genuinely fails partway through (already-created/
+  already-updated paths rolled back where safe - see `docs/tasks.md`);
+  otherwise `WARNINGS_PRESENT` (1) if `task create`/`task close`/`task
+  assign`/`task unassign` succeeded but its `TASK_INDEX.json` update
   failed, `task list` found a stale or unindexed entry (or a malformed
   index), or `task show`/`task validate` found only non-blocking
   issues; otherwise `SUCCESS` (0), including a conflict-free `--dry-run`
-  for either mutating command. See `docs/tasks.md`.
+  for any mutating command. See `docs/tasks.md`.
 
 ## Stability guarantee
 

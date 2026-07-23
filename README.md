@@ -46,13 +46,18 @@ remove` (confirmation-gated, eligibility/dirty/busy-checked removal of
 a ForgeOps-created worktree, with `--dry-run`, identity revalidation
 immediately before mutation, branch preservation by default, and
 opt-in non-force branch deletion via `--delete-branch` - see
-`docs/worktrees.md`). Most recently, a persistent, schema-controlled
-Task Specification Engine: `forgeops task create|show|list|validate|close`,
+`docs/worktrees.md`), followed by a persistent, schema-controlled Task
+Specification Engine: `forgeops task create|show|list|validate|close`,
 storing task intent, scope, acceptance criteria, validation
 expectations, and final outcome under `.agent/tasks/`, outside
 conversational context - deterministic task IDs, secret-shaped-content
 rejection before any write, and a `task close` confirmation/atomicity
-model mirroring `worktree remove`'s own (see `docs/tasks.md`).
+model mirroring `worktree remove`'s own. Most recently, persistent Task
+Ownership: `forgeops task assign|unassign`, linking an existing task to
+an existing, active, unassigned ForgeOps-managed worktree one-to-one -
+stored only through the `worktree_id`/`task_id` fields already reserved
+in `TASK.json`/`WORKTREE_REGISTRY.json`, atomic across both records,
+and cross-checked by an extended `task validate` (see `docs/tasks.md`).
 See `docs/architecture-decision.md` for why this project exists and what
 it deliberately does not build, `docs/cli-architecture.md` for how the
 CLI is put together, `docs/checkpoint-and-handoff.md` for the two state
@@ -129,6 +134,9 @@ forgeops task validate TASK_ID                                                  
 forgeops task close TASK_ID --result-file FILE                                    # confirmation-gated: preflight only, no mutation without --confirm
 forgeops task close TASK_ID --dry-run                                               # preview the planned completed/failed transition, mutate nothing
 forgeops task close TASK_ID --result-file FILE --confirm                              # actually close - completed (passed/waived) or failed validation
+forgeops task assign TASK_ID WORKTREE_NAME                                              # link an existing task to an existing, unassigned worktree (no --confirm needed)
+forgeops task assign TASK_ID WORKTREE_NAME --dry-run                                      # preview the assignment, mutate nothing
+forgeops task unassign TASK_ID --confirm                                                    # clear the link; --dry-run to preview, no --confirm to preflight only
 ```
 
 Every other command named in the long-term design (`agents`,
@@ -137,9 +145,9 @@ but not yet implemented — see `docs/phase2c-validation.md` for prior
 recommended-next-scope notes. `forgeops worktree` implements
 `list`/`create`/`remove` — no `prune`, no bulk/forced removal, no merge
 orchestration yet, see `docs/worktrees.md`. `forgeops task` implements
-`create`/`show`/`list`/`validate`/`close` — no task editing, reopening,
-deletion, agent/worktree assignment, or approvals workflow yet, see
-`docs/tasks.md`.
+`create`/`show`/`list`/`validate`/`close`/`assign`/`unassign` — no task
+editing, reopening, deletion, agent assignment, automatic worktree
+creation, or approvals workflow yet, see `docs/tasks.md`.
 
 ## Layout
 

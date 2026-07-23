@@ -84,6 +84,12 @@ Per-command specifics:
   force-kill); otherwise `SUCCESS` (0). Neither command ever returns
   `BLOCKED` - that code is reserved for `audit`/`release-check`'s secret
   and dangerous-filename findings. See `docs/process-list-and-cleanup.md`.
+- **`resume-context`**: `REPO_NOT_FOUND` (4) / `COMMAND_EXECUTION_FAILURE`
+  (5, git unavailable) as above; `WARNINGS_PRESENT` (1) if no
+  `.agent/CURRENT_STATE.json` exists yet, its schema is unsupported, or
+  (in principle - guarded by a fixed test) the bounded document exceeds
+  its own size ceiling; otherwise `SUCCESS` (0). Read-only - never
+  returns `BLOCKED`. See `docs/context-efficiency.md`.
 
 ## Stability guarantee
 

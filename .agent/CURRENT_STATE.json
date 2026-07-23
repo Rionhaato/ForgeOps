@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-22T21:32:10Z",
+  "generated_at": "2026-07-23T02:20:25Z",
   "branch": "feature/phase2b-targeted-testing",
-  "head": "4731af76c0eed19361e6a7f70a25d94e474dcf6d",
+  "head": "2955b252ec759f6a83663a0f5e8a0af14231a0e3",
   "remote": {
     "configured": false,
     "names": [],
@@ -12,8 +12,8 @@
   },
   "changed_files": {
     "staged": 0,
-    "modified": 8,
-    "untracked": 12
+    "modified": 11,
+    "untracked": 10
   },
   "has_local_changes": true,
   "detected_stack": [
@@ -43,7 +43,8 @@
     "Phase 2B: CLAUDE.md, forgeops changed, forgeops test --targeted (planner + executor), top-level CLI exception handling, hardened forgeops:allow-secret marker - committed 1949145 on feature/phase2b-targeted-testing (accepted)",
     "Phase 2C: forgeops test --full (build_full_test_plan sharing the existing plan/executor model) and forgeops release-check (aggregates doctor/audit/test --full, never reimplements their checks); 300 passing tests, zero regressions - committed 45f52a3 on feature/phase2b-targeted-testing (accepted)",
     "Phase 2C (checkpoint/handoff): forgeops checkpoint (writes .agent/CURRENT_STATE.json) and forgeops handoff (writes .agent/HANDOFF.md, derived from the same deterministic data) - forgeops/state/atomic_write.py and forgeops/state/checkpoint.py new, forgeops/state/schema.py gained SUPPORTED_SCHEMA_VERSIONS; 379 passing tests, zero regressions - committed 4731af7 on feature/phase2b-targeted-testing (accepted)",
-    "Phase 2C (process-list/cleanup): forgeops process-list (read-only Windows-native process discovery/classification via PowerShell/CIM + netstat, no psutil) and forgeops cleanup (conservative, dry-run-by-default; only an exact PID+repository+start-time registry match is ever a termination candidate; graceful taskkill only, never force; stale-record removal) - forgeops/state/runtime_registry.py, forgeops/detectors/processes.py, forgeops/detectors/process_association.py new; real disposable-process validation performed (registered a real child process, ran cleanup --execute against it, confirmed graceful-termination-timeout is reported honestly without escalation, force-cleaned the test process manually); 473 passing tests (up from 380), zero regressions - on feature/phase2b-targeted-testing, uncommitted pending review (per this checkpoint's explicit instruction not to create a second commit)"
+    "Phase 2C (process-list/cleanup): forgeops process-list (read-only Windows-native process discovery/classification via PowerShell/CIM + netstat, no psutil) and forgeops cleanup (conservative, dry-run-by-default; only an exact PID+repository+start-time registry match is ever a termination candidate; graceful taskkill only, never force; stale-record removal) - forgeops/state/runtime_registry.py, forgeops/detectors/processes.py, forgeops/detectors/process_association.py new; re-validated in a follow-up recovery session (real disposable-process execute + PID-reuse simulation, both fail closed correctly) - committed 2955b25 on feature/phase2b-targeted-testing (accepted)",
+    "Context-Efficiency Foundation: forgeops resume-context (read-only, bounded-size compact resume summary - forgeops/state/resume_context.py, forgeops/cli/resume_context.py, forgeops/core/governance.py), three project-local skills (.claude/skills/forgeops-resume, forgeops-validate, forgeops-completion-report), one read-only subagent restricted to Read/Grep/Glob (.claude/agents/forgeops-recovery-reviewer.md), two minimal deterministic hooks (.claude/hooks/pretooluse_safety.py on Bash|Edit|Write|NotebookEdit; .claude/hooks/sessionend_handoff.py on SessionEnd, invoking the existing forgeops handoff writer), and a read-only Superpowers compatibility record (docs/superpowers-compatibility.md, not installed/cloned/executed) - see docs/context-efficiency.md; on feature/phase2b-targeted-testing, uncommitted pending review (per this checkpoint's explicit instruction not to commit this work)"
   ],
   "recent_tests": [
     {
@@ -80,13 +81,28 @@
       "command": "forgeops process-list / forgeops cleanup (real execution: human + --json + dry-run + --execute against a real disposable test process in a disposable repo)",
       "result": "SUCCESS (exit 0/1 as expected); cleanup --execute correctly attempted graceful termination, correctly reported timeout without escalating; no other process or file touched",
       "timestamp_local": "2026-07-22"
+    },
+    {
+      "command": "python -m pytest tests -q (Context-Efficiency Foundation final gate)",
+      "result": "528 passed (up from 473; 55 new: resume-context builder/CLI, hooks, skill/subagent structural checks)",
+      "timestamp_local": "2026-07-23"
+    },
+    {
+      "command": "forgeops resume-context / forgeops resume-context --json (real execution against ForgeOps itself)",
+      "result": "SUCCESS (exit 0), 3051 bytes (ceiling 4096)",
+      "timestamp_local": "2026-07-23"
+    },
+    {
+      "command": "Get-Command claude / claude --version / codex availability check (PowerShell + Bash)",
+      "result": "claude FOUND (C:\\Users\\joshd\\.local\\bin\\claude.exe, v2.1.218) in both shells; codex NOT found in either shell",
+      "timestamp_local": "2026-07-23"
     }
   ],
   "blockers": [
     {
-      "description": "claude/codex CLI executables not found on PATH",
+      "description": "codex CLI executable not found on PATH (claude CLI resolved 2026-07-23: C:\\Users\\joshd\\.local\\bin\\claude.exe v2.1.218, confirmed in PowerShell and Bash)",
       "severity": "low",
-      "affects": "Phase 8 real-executable testing only; adapter can be built and tested against a mock"
+      "affects": "Phase 8 real-executable testing for the Codex adapter only; adapter can be built and tested against a mock"
     },
     {
       "description": "No Node project with installed test dependencies exists anywhere in scope (ForgeOps has no Node code; TrendForge is read-only)",
@@ -105,15 +121,16 @@
   "pending_approvals": [],
   "background_processes": [],
   "last_checkpoint": {
-    "phase": "Phase 2C (process-list/cleanup) - implemented and validated, uncommitted pending review",
-    "timestamp_local": "2026-07-22",
+    "phase": "Context-Efficiency Foundation - implemented and validated, uncommitted pending review",
+    "timestamp_local": "2026-07-23",
     "docs": [
-      "docs/process-list-and-cleanup.md",
+      "docs/context-efficiency.md",
+      "docs/superpowers-compatibility.md",
       "docs/cli-architecture.md (updated)",
       "docs/cli-exit-codes.md (updated)",
       "README.md (updated)",
       "CHANGELOG.md (updated)"
     ]
   },
-  "next_action": "Phase 2C (test --full + release-check) is committed at 45f52a3, and Phase 2C (checkpoint/handoff) is committed at 4731af7, both on feature/phase2b-targeted-testing. forgeops process-list and forgeops cleanup are implemented, tested (473 passing), and validated by real invocation - including a real disposable-process execute run whose graceful-termination-timeout was reported honestly without escalation - but deliberately left UNCOMMITTED for review per this checkpoint's explicit instruction (do not create a second commit). Do not commit the process-list/cleanup work without Joshua's explicit authorization. Once authorized, review `git status --short` for the new files (forgeops/state/runtime_registry.py, forgeops/detectors/processes.py, forgeops/detectors/process_association.py, forgeops/cli/process_list.py, forgeops/cli/cleanup.py, associated tests and docs) and commit with an appropriate message. Do not begin the next checkpoint (init/agents/worktrees/approvals/MCP/installers/Codex delegation/Rocky integration/business-operation modules, or a force-kill path for cleanup) automatically - all were explicitly out of scope for this bounded checkpoint."
+  "next_action": "forgeops process-list/cleanup is committed at 2955b25 on feature/phase2b-targeted-testing (re-validated for real in a follow-up recovery session before commit). The Context-Efficiency Foundation checkpoint (forgeops resume-context, three project-local skills, one read-only recovery subagent, two minimal deterministic hooks, a read-only Superpowers compatibility record) is implemented and targeted-tested but deliberately left UNCOMMITTED per this checkpoint's explicit instruction not to commit it. Do not commit this work without Joshua's explicit authorization. Once authorized: review `git status --short` for the new/modified files (forgeops/state/resume_context.py, forgeops/cli/resume_context.py, forgeops/core/governance.py, .claude/skills/**, .claude/agents/forgeops-recovery-reviewer.md, .claude/hooks/**, .claude/settings.json, docs/context-efficiency.md, docs/superpowers-compatibility.md, associated tests and doc updates) and commit with an appropriate message. Do not begin forgeops init, Superpowers installation, MCP enablement, write-capable agents, worktrees, approval orchestration, notifications, or Rocky integration - all were explicitly out of scope for this bounded checkpoint."
 }

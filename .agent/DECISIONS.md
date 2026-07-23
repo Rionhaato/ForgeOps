@@ -331,3 +331,89 @@ test written against an assumption, rather than a real command's real
 output, cannot catch on its own (consistent with the Phase 2A/2B lesson
 already recorded above: "real execution and disposable multi-stack repos
 remain mandatory, not just dogfooding").
+
+## 2026-07-23 — Context-Efficiency Foundation: ForgeOps remains the workflow authority
+
+This checkpoint added `forgeops resume-context`, project-local skills, a
+read-only subagent, and two hooks specifically to reduce main-session
+context consumption - not to hand any of ForgeOps's governance to
+another framework or tool. `CLAUDE.md` remains the sole always-on rule
+source; skills are explicitly-invoked procedure references that point
+back at `CLAUDE.md` rather than restating or superseding it; the
+subagent and hooks enforce existing rules (TrendForge protection,
+destructive-git rejection, no-force-kill, dry-run defaults) rather than
+introducing new ones. Full governance precedence recorded in
+`docs/superpowers-compatibility.md` and `docs/context-efficiency.md`.
+"Context reduction" is scoped explicitly to mean less main-conversation
+context, never a claim that total system token usage anywhere dropped
+to zero.
+
+## 2026-07-23 — Superpowers is prior art, evaluated but never installed as governance
+
+Superpowers (`github.com/obra/superpowers`) was researched via public
+documentation only (no clone, install, or execution) specifically to
+harvest useful workflow patterns without adopting its coordinator role.
+Three of its thirteen evaluated areas were rejected outright
+(subagent-driven development with write access, automatic commits, and
+large `SessionStart` injection) because they directly contradict
+standing ForgeOps rules; MCP-related guidance was rejected regardless of
+whether Superpowers's own core avoids MCP, since ForgeOps's "no MCP"
+rule is unconditional. See `docs/superpowers-compatibility.md` for the
+full adopt/adapt/reject matrix and the explicit governance-precedence
+ordering it records.
+
+## 2026-07-23 — `resume-context` avoids `build_checkpoint_data`'s tree scan by design
+
+`forgeops resume-context` intentionally does not reuse
+`forgeops.state.checkpoint.build_checkpoint_data` even though that
+function already assembles most of the same narrative fields - calling
+it would trigger a full repository tree scan (`detect_stack`) on every
+invocation, which defeats the entire purpose of a command meant to be
+near-free to run at the start of a session. Instead `resume-context`
+reads only the already-computed narrative fields out of the existing
+`CURRENT_STATE.json` (via the proven `load_previous_state`) and combines
+them with cheap, direct git calls. The tradeoff accepted: `resume-context`
+can only ever be as fresh as the last `forgeops checkpoint` run for
+narrative fields (mission, blockers, next_action) - acceptable, since
+those fields are narrative and only `forgeops checkpoint`/`handoff`
+ever legitimately update them anyway.
+
+## 2026-07-23 — compact-document size ceiling enforced by fixed per-field caps, not a runtime shrink loop
+
+`RESUME_CONTEXT_MAX_BYTES` (4096) is enforced by choosing small, fixed
+caps per field (e.g. 3 blockers at 120 chars each, 3 files per group at
+70 chars) whose worst-case sum is comfortably under the ceiling, rather
+than a build-then-measure-then-shrink retry loop. Considered the retry
+loop as more "adaptive," but rejected: fixed caps are simpler to reason
+about, trivially testable with one adversarial-narrative fixture
+(`tests/unit/test_resume_context.py::test_bounded_output_size_under_adversarial_narrative`),
+and avoid a whole class of bugs where a shrink pass could still overshoot
+if a future field is added without updating the shrink logic.
+
+## 2026-07-23 — the recovery-reviewer subagent gets Read/Grep/Glob only, never Bash
+
+`.claude/agents/forgeops-recovery-reviewer.md` deliberately omits `Bash`
+even though that means it cannot run `git` itself. Considered granting
+Bash restricted to read-only git subcommands - rejected, because
+Claude Code's subagent `tools:` frontmatter grants or denies whole tools,
+not specific command patterns within a tool; any `Bash` grant would be a
+real path to mutation, contradicting "never commit / never terminate a
+process / never modify TrendForge" for a subagent explicitly designed to
+be safe to run unsupervised in its own context. The invoking agent is
+instead expected to pass relevant git/`resume-context` facts directly in
+the prompt; the subagent can still independently read `.git/HEAD` and
+`.git/refs/heads/*` as plain text via `Read` if it needs to corroborate
+branch/HEAD itself.
+
+## 2026-07-23 — session-end handoff hook targets `SessionEnd`, not `Stop`
+
+Phase F's brief named the hook "Stop/session-end handoff hook," but
+Claude Code's `Stop` event fires after every single assistant turn, not
+once at session end - wiring a handoff write to `Stop` would run it far
+more often than "session-end" implies and was rejected. `SessionEnd`
+(fired once for `clear`/`resume`/`logout`/`prompt_input_exit`/other exit
+reasons) is the correct event for a one-time end-of-session write, and
+is what `.claude/settings.json` actually wires
+`.claude/hooks/sessionend_handoff.py` to. Documented here since it's a
+deliberate deviation from the literal phrase in the checkpoint brief,
+not an oversight.

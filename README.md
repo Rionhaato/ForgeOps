@@ -28,11 +28,18 @@ so another Claude Code or Codex session can resume safely), and
 process discovery/classification, plus a conservative, dry-run-by-
 default cleanup for the narrow set of processes ForgeOps can prove it's
 responsible for via an atomic `.agent/runtime/PROCESS_REGISTRY.json`).
+A Context-Efficiency Foundation checkpoint followed: `forgeops
+resume-context` (a read-only, bounded-size compact summary for a new
+session to consume instead of rereading state files), three project-local
+skills, one read-only recovery subagent, two minimal deterministic
+Claude Code hooks, and a read-only Superpowers compatibility record (see
+`docs/context-efficiency.md`).
 See `docs/architecture-decision.md` for why this project exists and what
 it deliberately does not build, `docs/cli-architecture.md` for how the
 CLI is put together, `docs/checkpoint-and-handoff.md` for the two state
 writers, `docs/process-list-and-cleanup.md` for process discovery and
-cleanup's safety model, and `.agent/HANDOFF.md` for current progress.
+cleanup's safety model, `docs/context-efficiency.md` for the context-
+efficiency layer, and `.agent/HANDOFF.md` for current progress.
 
 ## CLAUDE.md vs. `.agent/` state files
 
@@ -70,6 +77,7 @@ forgeops checkpoint                        # write .agent/CURRENT_STATE.json
 forgeops handoff                             # write .agent/HANDOFF.md (derived from checkpoint data)
 forgeops process-list                          # read-only: discover/classify processes associated with this repo
 forgeops cleanup                                 # dry-run by default: report cleanup candidates, act on none
+forgeops resume-context                            # read-only: compact, bounded-size summary for a new session
 
 forgeops <command> --json        # structured JSON instead of human-readable text
 forgeops <command> --repo <path> # inspect a repository other than the current directory

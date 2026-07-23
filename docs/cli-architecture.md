@@ -18,6 +18,7 @@ forgeops/
     handoff.py                 forgeops handoff (writes .agent/HANDOFF.md, derived from checkpoint data)
     process_list.py             forgeops process-list (read-only process discovery/classification)
     cleanup.py                   forgeops cleanup (conservative, dry-run-by-default process/registry cleanup)
+    resume_context.py           forgeops resume-context (read-only, bounded-size compact resume summary)
   core/
     paths.py             repo-root discovery, path normalization
     git.py                read-only git-state inspection (status entries, renames, ahead/behind, ...)
@@ -26,6 +27,7 @@ forgeops/
     exit_codes.py         shared exit-code constants
     subprocess_utils.py   safe subprocess execution (incl. Windows .cmd-shim resolution)
     timestamps.py         deterministic, injectable-clock timestamps
+    governance.py          small constants mirroring CLAUDE.md sections 8/11 (shared by handoff + resume-context)
   detectors/
     tree_scan.py          single bounded filesystem walk -> TreeScan
     stack.py               stack detection from tree_scan evidence
@@ -41,6 +43,7 @@ forgeops/
     checkpoint.py            pure, deterministic CURRENT_STATE.json document builder (shared by checkpoint + handoff)
     atomic_write.py          atomic same-filesystem temp-file-then-replace text writer
     runtime_registry.py       .agent/runtime/PROCESS_REGISTRY.json load/save (shared by process-list + cleanup)
+    resume_context.py          pure, bounded-size compact resume-context document builder (shared by resume-context CLI)
   reporting/
     logs.py                 logs/<command>/<timestamp>/ persistence
   testing/

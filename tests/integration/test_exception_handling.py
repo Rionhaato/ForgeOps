@@ -427,6 +427,40 @@ def test_cleanup_default_is_dry_run(git_repo, monkeypatch):
     assert captured_kwargs["execute"] is False
 
 
+def test_resume_context_unexpected_exception_returns_internal_error(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in resume-context")
+
+    monkeypatch.setattr("forgeops.cli.resume_context_cmd.run_resume_context", boom)
+    exit_code = main(["resume-context", "--repo", str(git_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in resume-context" in captured.err
+
+
+def test_resume_context_unexpected_exception_json_mode(git_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in resume-context")
+
+    monkeypatch.setattr("forgeops.cli.resume_context_cmd.run_resume_context", boom)
+    exit_code = main(["resume-context", "--repo", str(git_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_resume_context_debug_flag_lets_exception_propagate(git_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in resume-context")
+
+    monkeypatch.setattr("forgeops.cli.resume_context_cmd.run_resume_context", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in resume-context"):
+        main(["--debug", "resume-context", "--repo", str(git_repo)])
+
+
 def test_test_command_requires_a_mode_flag(git_repo, capsys):
     exit_code = main(["test", "--repo", str(git_repo)])
     captured = capsys.readouterr()

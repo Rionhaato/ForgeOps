@@ -31,7 +31,12 @@ scratch — it's already known.
 
 ## Environment
 
-- `claude` and `codex` CLI executables: not found on PATH as of Phase 0
+- `claude` CLI executable: available as of 2026-07-23 —
+  `C:\Users\joshd\.local\bin\claude.exe`, v2.1.218 (confirmed via
+  `Get-Command`/`which` and `claude --version` in both PowerShell and
+  Bash). Joshua added `C:\Users\joshd\.local\bin` to his user PATH; this
+  process inherits it.
+- `codex` CLI executable: still not found on PATH as of 2026-07-23
   (checked via `which`/`Get-Command`, no version output). Phase 8's Codex
   adapter must be built to detect this state and continue with a mock
   executable, per the mission's explicit instruction — do not install or

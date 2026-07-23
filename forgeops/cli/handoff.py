@@ -14,6 +14,11 @@ from typing import Any
 
 from forgeops.core import exit_codes
 from forgeops.core.git import git_version
+from forgeops.core.governance import (
+    APPROVAL_BOUNDARY_CATEGORIES,
+    PROHIBITED_ACTIONS,
+    STANDARD_VALIDATION_COMMANDS,
+)
 from forgeops.core.paths import RepoNotFoundError, resolve_repo_root
 from forgeops.core.result import Check, CommandResult
 from forgeops.core.timestamps import Clock, iso_now
@@ -24,39 +29,6 @@ from forgeops.state.checkpoint import build_checkpoint_data, load_previous_state
 SCHEMA_VERSION = 1
 STATE_RELATIVE_PATH = Path(".agent") / "CURRENT_STATE.json"
 HANDOFF_RELATIVE_PATH = Path(".agent") / "HANDOFF.md"
-
-# Mirrors CLAUDE.md section 8 ("Standard validation commands") - update
-# both places together if the standard validation sequence changes.
-STANDARD_VALIDATION_COMMANDS = (
-    "python -m pytest tests -q",
-    "python -m compileall -q forgeops tests",
-    "python -m forgeops doctor",
-    "python -m forgeops status",
-    "python -m forgeops audit",
-    "git diff --check",
-    "git status --short",
-)
-
-# Mirrors CLAUDE.md section 11 ("Approval boundaries") and this repo's
-# own established .agent/HANDOFF.md wording for exactly this list -
-# never invented fresh per invocation.
-APPROVAL_BOUNDARY_CATEGORIES = (
-    "installation",
-    "authentication",
-    "secrets access",
-    "destructive actions",
-    "production/publishing/spending/deployment/financial actions",
-    "commits (unless explicitly authorized for this checkpoint)",
-    "genuine ambiguity about sensitive files",
-)
-
-PROHIBITED_ACTIONS = (
-    "Do not push, deploy, publish, or configure a remote.",
-    "Do not force-push, `git reset --hard`, or rewrite history without explicit operator approval.",
-    "Do not amend, squash, or rebase an existing commit.",
-    "Do not install dependencies or authenticate an external service.",
-    "Do not invoke any command against the read-only reference repository, if one is configured (see below).",
-)
 
 
 def run_handoff(

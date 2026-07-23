@@ -6,6 +6,50 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Context-Efficiency Foundation
+- Implemented `forgeops resume-context`: read-only, bounded-size
+  (strict tested byte ceiling, `RESUME_CONTEXT_MAX_BYTES`) compact
+  summary of repository identity, branch/HEAD, working-tree shape, the
+  last recorded checkpoint phase, latest recorded test count,
+  unresolved blockers, the exact next approved task, already-validated
+  commands ("do not repeat"), approval boundaries, and a stop-boundary
+  reminder - for a new session to consume instead of rereading
+  `.agent/CURRENT_STATE.json`/`.agent/HANDOFF.md` or the repository in
+  full. Deliberately avoids the tree-scan/stack-detection work
+  `build_checkpoint_data` does, reading only already-computed narrative
+  fields plus cheap git facts. New: `forgeops/state/resume_context.py`,
+  `forgeops/cli/resume_context.py`, `forgeops/core/governance.py`
+  (small constants shared by `handoff` and `resume-context`, hoisted out
+  of `forgeops/cli/handoff.py` to avoid a `state` -> `cli` circular
+  import).
+- Added three project-local Claude Code skills
+  (`.claude/skills/forgeops-resume/`, `forgeops-validate/`,
+  `forgeops-completion-report/`) - small, explicitly-invoked instruction
+  files that reference `CLAUDE.md`/`docs/context-efficiency.md` instead
+  of restating them.
+- Added one read-only subagent (`.claude/agents/forgeops-recovery-reviewer.md`)
+  restricted to `Read`/`Grep`/`Glob` only (no `Bash`, `Edit`, `Write`, or
+  MCP tools) - isolates exploratory recovery/audit reads from the main
+  session's context.
+- Added two minimal deterministic Claude Code hooks
+  (`.claude/hooks/`, wired in project-local `.claude/settings.json`
+  only): a `PreToolUse` safety hook blocking TrendForge mutation,
+  destructive git operations, and a short catastrophic-filesystem-command
+  list; a `SessionEnd` hook invoking the existing `forgeops handoff`
+  writer once per session (deliberately not `Stop`, which fires after
+  every turn in this Claude Code version).
+- Added a read-only Superpowers compatibility record
+  (`docs/superpowers-compatibility.md`) - prior-art adopt/adapt/reject
+  analysis only; Superpowers is not installed, cloned, or executed.
+- New doc: `docs/context-efficiency.md`. Updates to
+  `docs/cli-architecture.md`, `docs/cli-exit-codes.md`, `README.md`.
+- 55 new tests (473 -> 528): `resume-context` builder/CLI (clean/dirty/
+  spacey-path/missing-state/malformed-state/adversarial-size/secret-
+  redaction), hook behavior (TrendForge protection, destructive-git
+  rejection, safe-command passthrough, malformed-input safety, bounded
+  session-end write), and structural/safety-language checks for the
+  skills and subagent.
+
 ### Phase 2C — Process List and Cleanup
 - Implemented `forgeops process-list`: read-only, Windows-native
   discovery (PowerShell/CIM `Win32_Process` + `netstat -ano` for

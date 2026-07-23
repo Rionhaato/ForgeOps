@@ -30,6 +30,7 @@ from forgeops.cli import doctor as doctor_cmd
 from forgeops.cli import handoff as handoff_cmd
 from forgeops.cli import process_list as process_list_cmd
 from forgeops.cli import release_check as release_check_cmd
+from forgeops.cli import resume_context as resume_context_cmd
 from forgeops.cli import status as status_cmd
 from forgeops.cli import test as test_cmd
 from forgeops.core import exit_codes
@@ -100,6 +101,10 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="report cleanup candidates, take no action (default behavior)")
     cleanup_sub.add_argument("--execute", action="store_true", help="actually attempt graceful termination / stale-record removal for eligible candidates")
 
+    resume_context_sub = subparsers.add_parser("resume-context", help="forgeops resume-context")
+    resume_context_sub.add_argument("--json", action="store_true")
+    resume_context_sub.add_argument("--repo", default=None)
+
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
         sub.add_argument("--json", action="store_true")
@@ -165,6 +170,8 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
         # --dry-run wins if both flags are somehow given - default to safety.
         execute = args.execute and not args.dry_run
         return cleanup_cmd.run_cleanup(args.repo, execute=execute)
+    if args.command == "resume-context":
+        return resume_context_cmd.run_resume_context(args.repo)
     # Resolved via getattr on the module, not a pre-bound reference, so
     # that monkeypatching e.g. forgeops.cli.doctor_cmd.run_doctor (the
     # normal way tests substitute behavior) actually takes effect - a
@@ -190,6 +197,8 @@ def _render_result(args: argparse.Namespace, result: CommandResult) -> str:
         return process_list_cmd.render_human(result)
     if args.command == "cleanup":
         return cleanup_cmd.render_human(result)
+    if args.command == "resume-context":
+        return resume_context_cmd.render_human(result)
     module = _SIMPLE_MODULES[args.command]
     return module.render_human(result)
 
@@ -208,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dispatchable = args.command in _SIMPLE_MODULES or args.command in (
         "changed", "test", "release-check", "checkpoint", "handoff",
-        "process-list", "cleanup",
+        "process-list", "cleanup", "resume-context",
     )
     if not dispatchable:
         print(

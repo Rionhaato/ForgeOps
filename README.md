@@ -52,12 +52,19 @@ storing task intent, scope, acceptance criteria, validation
 expectations, and final outcome under `.agent/tasks/`, outside
 conversational context - deterministic task IDs, secret-shaped-content
 rejection before any write, and a `task close` confirmation/atomicity
-model mirroring `worktree remove`'s own. Most recently, persistent Task
-Ownership: `forgeops task assign|unassign`, linking an existing task to
+model mirroring `worktree remove`'s own. Persistent Task Ownership
+followed: `forgeops task assign|unassign`, linking an existing task to
 an existing, active, unassigned ForgeOps-managed worktree one-to-one -
 stored only through the `worktree_id`/`task_id` fields already reserved
 in `TASK.json`/`WORKTREE_REGISTRY.json`, atomic across both records,
-and cross-checked by an extended `task validate` (see `docs/tasks.md`).
+and cross-checked by an extended `task validate`. Most recently, an
+Agent Ownership Foundation: `forgeops agent register|list|show` (a
+persistent, purely declarative agent identity registry - `.agent/agents/AGENT_REGISTRY.json`
+- never probing an installed CLI, never authenticating, never launching
+a process) plus `forgeops task assign-agent|unassign-agent` (the same
+one-to-one ownership pattern applied to tasks and agents, atomic across
+`TASK.json` and `AGENT_REGISTRY.json`, independent of worktree
+ownership - see `docs/agents.md`).
 See `docs/architecture-decision.md` for why this project exists and what
 it deliberately does not build, `docs/cli-architecture.md` for how the
 CLI is put together, `docs/checkpoint-and-handoff.md` for the two state
@@ -65,7 +72,8 @@ writers, `docs/process-list-and-cleanup.md` for process discovery and
 cleanup's safety model, `docs/context-efficiency.md` for the context-
 efficiency layer, `docs/project-init.md` for `forgeops init`,
 `docs/worktrees.md` for `forgeops worktree`, `docs/tasks.md` for
-`forgeops task`, and `.agent/HANDOFF.md` for current progress.
+`forgeops task`, `docs/agents.md` for `forgeops agent`, and
+`.agent/HANDOFF.md` for current progress.
 
 ## CLAUDE.md vs. `.agent/` state files
 
@@ -137,6 +145,12 @@ forgeops task close TASK_ID --result-file FILE --confirm                        
 forgeops task assign TASK_ID WORKTREE_NAME                                              # link an existing task to an existing, unassigned worktree (no --confirm needed)
 forgeops task assign TASK_ID WORKTREE_NAME --dry-run                                      # preview the assignment, mutate nothing
 forgeops task unassign TASK_ID --confirm                                                    # clear the link; --dry-run to preview, no --confirm to preflight only
+forgeops agent register AGENT_ID --kind KIND                                                  # register a declarative agent identity (kind: claude|codex|specialist|rocky)
+forgeops agent register AGENT_ID --kind KIND --display-name NAME --dry-run                      # preview registration with a custom display name, write nothing
+forgeops agent list                                                                                # read-only: concise rows for every agent; --kind KIND filters
+forgeops agent show AGENT_ID                                                                         # read-only: kind, status, capabilities, assigned task, timestamps
+forgeops task assign-agent TASK_ID AGENT_ID                                                            # link an existing task to an existing, unassigned agent (no --confirm needed)
+forgeops task unassign-agent TASK_ID --confirm                                                           # clear the link; --dry-run to preview, no --confirm to preflight only
 ```
 
 Every other command named in the long-term design (`agents`,
@@ -145,9 +159,12 @@ but not yet implemented — see `docs/phase2c-validation.md` for prior
 recommended-next-scope notes. `forgeops worktree` implements
 `list`/`create`/`remove` — no `prune`, no bulk/forced removal, no merge
 orchestration yet, see `docs/worktrees.md`. `forgeops task` implements
-`create`/`show`/`list`/`validate`/`close`/`assign`/`unassign` — no task
-editing, reopening, deletion, agent assignment, automatic worktree
-creation, or approvals workflow yet, see `docs/tasks.md`.
+`create`/`show`/`list`/`validate`/`close`/`assign`/`unassign`/
+`assign-agent`/`unassign-agent` — no task editing, reopening, deletion,
+automatic worktree creation, or approvals workflow yet, see
+`docs/tasks.md`. `forgeops agent` implements `register`/`list`/`show`
+— no agent execution, session launching, disable/enable, or deletion
+yet, see `docs/agents.md`.
 
 ## Layout
 

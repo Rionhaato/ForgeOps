@@ -1,11 +1,15 @@
-# Task Specification Engine (`forgeops task create|show|list|validate|close|assign|unassign`)
+# Task Specification Engine (`forgeops task create|show|list|validate|close|assign|unassign|assign-agent|unassign-agent`)
 
 A persistent, schema-controlled store for task intent, scope, acceptance
-criteria, validation expectations, final outcome, and (since the Task
-Ownership checkpoint) worktree ownership - kept outside conversational
-context under `.agent/tasks/`. This checkpoint's ownership layer
-implements only assignment/unassignment of an *existing* managed
-worktree to an *existing* task - see "Explicit non-goals" below.
+criteria, validation expectations, final outcome, worktree ownership
+(since the Task Ownership checkpoint), and agent ownership (since the
+Agent Ownership Foundation checkpoint) - kept outside conversational
+context under `.agent/tasks/`. Worktree assignment only ever links an
+*existing* managed worktree to an *existing* task; agent assignment
+only ever links an *existing* registered agent to an *existing* task -
+see "Explicit non-goals" below, and docs/agents.md for the full agent
+identity/ownership contract (`forgeops agent register|list|show`,
+`forgeops task assign-agent|unassign-agent`).
 
 ## Commands
 
@@ -39,10 +43,21 @@ forgeops task unassign TASK_ID [--repo PATH]
 forgeops task unassign TASK_ID [--repo PATH] --dry-run
 forgeops task unassign TASK_ID [--repo PATH] --confirm
 forgeops task unassign TASK_ID [--repo PATH] --json
+
+forgeops task assign-agent TASK_ID AGENT_ID [--repo PATH]
+forgeops task assign-agent TASK_ID AGENT_ID [--repo PATH] --dry-run
+forgeops task assign-agent TASK_ID AGENT_ID [--repo PATH] --json
+
+forgeops task unassign-agent TASK_ID [--repo PATH]
+forgeops task unassign-agent TASK_ID [--repo PATH] --dry-run
+forgeops task unassign-agent TASK_ID [--repo PATH] --confirm
+forgeops task unassign-agent TASK_ID [--repo PATH] --json
 ```
 
 `forgeops task` with no subcommand is a plain argparse usage error
-(exit 2), matching every other two-level ForgeOps subcommand.
+(exit 2), matching every other two-level ForgeOps subcommand. See
+docs/agents.md for the full contract behind `assign-agent`/
+`unassign-agent` and the `forgeops agent` command family they depend on.
 
 ## Precondition: an initialized ForgeOps project
 
@@ -159,13 +174,15 @@ Criteria section, an unresolvable accepted checkpoint, ...) is surfaced
 as a warning check (`WARNINGS_PRESENT`), never a refusal - `task show`
 is for humans/agents to *see* problems, `task validate`/`task close`
 are where they actually block something. JSON output exposes the full
-`TASK.json` fields (including `worktree_id`), parsed SPEC.md sections,
-`VALIDATION.json`, and RESULT.md presence/content; nothing raw or
-secret-shaped is ever printed (every managed artifact is already
-scanned before it's written, and free-text fields are additionally
-passed through `forgeops.security.redact.redact_text` as defense in
-depth). Human output includes an explicit `assigned worktree: <name or
-None>  ownership: assigned|unassigned` line - see "Ownership" below.
+`TASK.json` fields (including `worktree_id` and `agent_id`), parsed
+SPEC.md sections, `VALIDATION.json`, and RESULT.md presence/content;
+nothing raw or secret-shaped is ever printed (every managed artifact is
+already scanned before it's written, and free-text fields are
+additionally passed through `forgeops.security.redact.redact_text` as
+defense in depth). Human output includes explicit `assigned worktree:
+<name or None>  ownership: assigned|unassigned` and `assigned agent:
+<id or None>  agent ownership: assigned|unassigned` lines - see
+"Ownership" below and docs/agents.md "Ownership" for the agent side.
 
 ## Task list
 
@@ -179,7 +196,8 @@ refusal. Also detects (never repairs) two drift conditions, each a
 its directory no longer exists) and an **unindexed directory** (a
 `task-NNNN`-shaped directory on disk with no index record) - mirroring
 `worktree list`'s own stale-registry-entry detection. Each human-output
-row includes `assigned_worktree=<name or None>`.
+row includes `assigned_worktree=<name or None>` and
+`assigned_agent=<id or None>`.
 
 ## Task validate
 
@@ -199,7 +217,11 @@ consistency (a warning either direction - reachable only by manual
 tampering, since the normal lifecycle never produces a mismatch), path
 containment beneath the managed tasks root, duplicate task IDs in the
 index, and secret-shaped content in every managed artifact (TASK.json,
-SPEC.md, VALIDATION.json, RESULT.md).
+SPEC.md, VALIDATION.json, RESULT.md). Also extended with ten
+agent-ownership-consistency blockers - see docs/agents.md "Validation
+extensions" for the full list (missing/disabled/mismatched/orphaned
+agent ownership, invalid agent identifiers, index disagreement, and a
+terminal task still carrying an assigned agent).
 
 Never runs project tests, never executes a validation command, never
 mutates a task file, never assigns a worktree/agent, never changes
@@ -425,6 +447,11 @@ checkpoints.
 - `SUCCESS` (0) - otherwise, including a conflict-free `--dry-run` for
   any mutating command.
 
+`task assign-agent`/`task unassign-agent` follow this same table -
+see docs/agents.md "Exit codes" for their own conflict/warning keys
+(agent-specific, e.g. `agent-not-found`, `agent-disabled`,
+`task-has-no-worktree`).
+
 ## Secret handling
 
 Every string ever written to a managed task artifact - a supplied
@@ -436,14 +463,18 @@ validate` re-scans every artifact on every read as an ongoing
 consistency check, since a task directory could in principle be edited
 directly outside the CLI.
 
-## Explicit non-goals (this checkpoint)
+## Explicit non-goals
 
 No automatic worktree creation (assignment only ever links to an
-*existing* worktree), no agent assignment, no agent execution, no
-parallel task routing, no approvals workflow, no merge orchestration,
-no MCP, no notifications, no deployment, no Rocky integration, no task
-editing, no reopening, no arbitrary status changes, no task deletion,
-no `worktree remove`/branch/Git-ownership changes of any kind (task
-ownership is a ForgeOps-level link only, never touching Git itself).
-`agent_id` still exists in the schema for a later checkpoint to
-populate, exactly like `worktree_id` did for this one.
+*existing* worktree), no agent execution, no session launching, no
+process monitoring, no parallel task routing, no approvals workflow, no
+merge orchestration, no MCP, no notifications, no deployment, no Rocky
+integration, no task editing, no reopening, no arbitrary status
+changes, no task deletion, no `worktree remove`/branch/Git-ownership
+changes of any kind (task ownership is a ForgeOps-level link only,
+never touching Git itself). Persistent agent identity and task-to-agent
+ownership (`forgeops agent register|list|show`, `forgeops task
+assign-agent|unassign-agent`) are implemented as a separate layer - see
+docs/agents.md for that command family's own explicit non-goals (no
+launching Claude Code/Codex, no probing an installed CLI, no
+authentication, no agent disable/enable or deletion yet).

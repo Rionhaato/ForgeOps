@@ -138,6 +138,49 @@ def test_python_dash_m_forgeops_task_ownership_real_execution(git_repo):
     assert task_json["worktree_id"] is None
 
 
+def test_python_dash_m_forgeops_agent_ownership_real_execution(git_repo):
+    init_result = _run_module(["init", str(git_repo)], cwd=git_repo)
+    assert init_result.returncode == 0
+
+    create_result = _run_module(["task", "create", "Owned Task", "--repo", str(git_repo)], cwd=git_repo)
+    assert create_result.returncode == 0
+
+    register_result = _run_module(
+        ["agent", "register", "claude-primary", "--kind", "claude", "--repo", str(git_repo)], cwd=git_repo,
+    )
+    assert register_result.returncode == 0
+    assert "forgeops agent register" in register_result.stdout
+    registry_path = git_repo / ".agent" / "agents" / "AGENT_REGISTRY.json"
+    assert registry_path.is_file()
+
+    list_result = _run_module(["agent", "list", "--repo", str(git_repo)], cwd=git_repo)
+    assert list_result.returncode == 0
+    assert "claude-primary" in list_result.stdout
+
+    assign_result = _run_module(
+        ["task", "assign-agent", "task-0001", "claude-primary", "--repo", str(git_repo)], cwd=git_repo,
+    )
+    assert assign_result.returncode in (0, 1)  # SUCCESS or WARNINGS_PRESENT (no worktree yet)
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["agent_id"] == "claude-primary"
+
+    no_confirm = _run_module(["task", "unassign-agent", "task-0001", "--repo", str(git_repo)], cwd=git_repo)
+    assert no_confirm.returncode == 2  # BLOCKED: confirmation required
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["agent_id"] == "claude-primary"
+
+    unassign_result = _run_module(
+        ["task", "unassign-agent", "task-0001", "--repo", str(git_repo), "--confirm"], cwd=git_repo,
+    )
+    assert unassign_result.returncode == 0
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["agent_id"] is None
+
+    # The agent registration itself must remain untouched by unassignment.
+    agent_list_after = _run_module(["agent", "list", "--repo", str(git_repo)], cwd=git_repo)
+    assert "claude-primary" in agent_list_after.stdout
+
+
 def test_python_dash_m_forgeops_invalid_repo_path_exit_code(tmp_path):
     result = _run_module(["status", "--repo", str(tmp_path / "nope")], cwd=tmp_path)
     assert result.returncode == 4  # REPO_NOT_FOUND

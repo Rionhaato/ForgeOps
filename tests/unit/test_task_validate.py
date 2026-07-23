@@ -375,3 +375,169 @@ def test_ownership_validate_never_mutates(initialized_repo):
     validate_task(initialized_repo, task_id, True, _resolve_ok)
     after = set(initialized_repo.rglob("*"))
     assert before == after
+
+
+# --- agent ownership consistency -----------------------------------------------
+
+
+def _register_agent(repo_root, agent_id="claude-primary", kind="claude"):
+    from forgeops.state.agent_register import apply_agent_register, build_agent_register_plan
+    plan = build_agent_register_plan(repo_root, agent_id, kind, None)
+    outcome = apply_agent_register(repo_root, plan)
+    assert outcome.ok is True
+    return agent_id
+
+
+def _assign_agent(repo_root, task_id, agent_id):
+    from forgeops.state.task_ownership import apply_task_assign_agent, build_task_assign_agent_plan
+    plan = build_task_assign_agent_plan(repo_root, task_id, agent_id)
+    outcome = apply_task_assign_agent(repo_root, plan)
+    assert outcome.ok is True
+
+
+def test_valid_agent_ownership_has_no_agent_issues(initialized_repo):
+    task_id = _create(initialized_repo)
+    agent_id = _register_agent(initialized_repo)
+    _assign_agent(initialized_repo, task_id, agent_id)
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    agent_keys = {
+        "agent-missing", "agent-registry-malformed", "agent-disabled-while-assigned",
+        "agent-reciprocal-mismatch", "duplicate-agent-assignment", "orphan-task-agent-ownership",
+        "orphan-registry-agent-ownership", "task-index-agent-mismatch", "invalid-agent-identifier",
+        "terminal-task-with-agent",
+    }
+    assert not any(i.key in agent_keys for i in outcome.issues)
+
+
+def test_missing_agent_is_a_blocker(initialized_repo):
+    from forgeops.state.task_registry import save_task_record
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    record = load_task_record(task_dir).record
+    tampered = type(record)(**{**record.__dict__, "agent_id": "no-such-agent"})
+    save_task_record(task_dir, tampered)
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "agent-missing" for i in outcome.blockers)
+
+
+def test_disabled_assigned_agent_is_a_blocker(initialized_repo):
+    from forgeops.state.agent_registry import STATUS_DISABLED, AgentRegistryDocument, load_agent_registry, save_agent_registry
+    task_id = _create(initialized_repo)
+    agent_id = _register_agent(initialized_repo)
+    _assign_agent(initialized_repo, task_id, agent_id)
+    registry = load_agent_registry(initialized_repo)
+    tampered = type(registry.records[0])(**{**registry.records[0].__dict__, "status": STATUS_DISABLED})
+    save_agent_registry(initialized_repo, AgentRegistryDocument(records=[tampered]))
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "agent-disabled-while-assigned" for i in outcome.blockers)
+
+
+def test_agent_reciprocal_mismatch_is_a_blocker(initialized_repo):
+    from forgeops.state.task_registry import save_task_record
+    task_id1 = _create(initialized_repo, "Task One")
+    task_id2 = _create(initialized_repo, "Task Two")
+    agent_id = _register_agent(initialized_repo)
+    _assign_agent(initialized_repo, task_id1, agent_id)
+    # Tamper: point task2's TASK.json at the same agent without updating the registry.
+    task_dir2 = task_dir_for(initialized_repo, task_id2)
+    record2 = load_task_record(task_dir2).record
+    tampered2 = type(record2)(**{**record2.__dict__, "agent_id": agent_id})
+    save_task_record(task_dir2, tampered2)
+    outcome = validate_task(initialized_repo, task_id2, True, _resolve_ok)
+    assert any(i.key == "agent-reciprocal-mismatch" for i in outcome.blockers)
+
+
+def test_duplicate_agent_assignment_is_a_blocker(initialized_repo):
+    from forgeops.state.agent_registry import AgentRegistryDocument, load_agent_registry, save_agent_registry
+    task_id = _create(initialized_repo)
+    agent1 = _register_agent(initialized_repo, "claude-primary")
+    agent2 = _register_agent(initialized_repo, "codex-reviewer", "codex")
+    _assign_agent(initialized_repo, task_id, agent1)
+    registry = load_agent_registry(initialized_repo)
+    records = list(registry.records)
+    idx = next(i for i, r in enumerate(records) if r.agent_id == agent2)
+    records[idx] = type(records[idx])(**{**records[idx].__dict__, "assigned_task_id": task_id})
+    save_agent_registry(initialized_repo, AgentRegistryDocument(records=records))
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "duplicate-agent-assignment" for i in outcome.blockers)
+
+
+def test_orphan_task_agent_ownership_is_a_blocker(initialized_repo):
+    from forgeops.state.agent_registry import AgentRegistryDocument, load_agent_registry, save_agent_registry
+    task_id = _create(initialized_repo)
+    agent_id = _register_agent(initialized_repo)
+    _assign_agent(initialized_repo, task_id, agent_id)
+    registry = load_agent_registry(initialized_repo)
+    tampered = type(registry.records[0])(**{**registry.records[0].__dict__, "assigned_task_id": None})
+    save_agent_registry(initialized_repo, AgentRegistryDocument(records=[tampered]))
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "orphan-task-agent-ownership" for i in outcome.blockers)
+
+
+def test_orphan_registry_agent_ownership_is_a_blocker(initialized_repo):
+    from forgeops.state.task_registry import save_task_record
+    task_id = _create(initialized_repo)
+    agent_id = _register_agent(initialized_repo)
+    _assign_agent(initialized_repo, task_id, agent_id)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    record = load_task_record(task_dir).record
+    tampered = type(record)(**{**record.__dict__, "agent_id": None})
+    save_task_record(task_dir, tampered)
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "orphan-registry-agent-ownership" for i in outcome.blockers)
+
+
+def test_terminal_task_with_assigned_agent_is_a_blocker(initialized_repo):
+    from forgeops.state.task_registry import STATUS_COMPLETED, save_task_record
+    task_id = _create(initialized_repo)
+    agent_id = _register_agent(initialized_repo)
+    _assign_agent(initialized_repo, task_id, agent_id)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    record = load_task_record(task_dir).record
+    tampered = type(record)(**{**record.__dict__, "status": STATUS_COMPLETED})
+    save_task_record(task_dir, tampered)
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "terminal-task-with-agent" for i in outcome.blockers)
+
+
+def test_invalid_agent_identifier_is_a_blocker(initialized_repo):
+    from forgeops.state.task_registry import save_task_record
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    record = load_task_record(task_dir).record
+    tampered = type(record)(**{**record.__dict__, "agent_id": "Has Spaces"})
+    save_task_record(task_dir, tampered)
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "invalid-agent-identifier" for i in outcome.blockers)
+
+
+def test_task_index_agent_mismatch_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    agent_id = _register_agent(initialized_repo)
+    _assign_agent(initialized_repo, task_id, agent_id)
+    import json
+    index_path = initialized_repo / ".agent" / "tasks" / "TASK_INDEX.json"
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    payload["records"][0]["agent_id"] = "some-other-agent"
+    index_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "task-index-agent-mismatch" for i in outcome.blockers)
+
+
+def test_agent_registry_malformed_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    registry_path = initialized_repo / ".agent" / "agents" / "AGENT_REGISTRY.json"
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_text("{ not valid", encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "agent-registry-malformed" for i in outcome.blockers)
+
+
+def test_agent_ownership_validate_never_mutates(initialized_repo):
+    task_id = _create(initialized_repo)
+    agent_id = _register_agent(initialized_repo)
+    _assign_agent(initialized_repo, task_id, agent_id)
+    before = set(initialized_repo.rglob("*"))
+    validate_task(initialized_repo, task_id, True, _resolve_ok)
+    after = set(initialized_repo.rglob("*"))
+    assert before == after

@@ -902,3 +902,175 @@ def test_task_unassign_confirm_and_dry_run_flags_reach_run_task_unassign(initial
     main(["task", "unassign", "task-0001", "--repo", str(initialized_repo), "--confirm"])
     assert captured_kwargs["confirm"] is True
     assert captured_kwargs["dry_run"] is False
+
+
+def test_task_assign_agent_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task assign-agent")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_assign_agent", boom)
+    exit_code = main(["task", "assign-agent", "task-0001", "claude-primary", "--repo", str(initialized_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in task assign-agent" in captured.err
+
+
+def test_task_assign_agent_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task assign-agent")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_assign_agent", boom)
+    exit_code = main(["task", "assign-agent", "task-0001", "claude-primary", "--repo", str(initialized_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_task_assign_agent_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task assign-agent")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_assign_agent", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task assign-agent"):
+        main(["--debug", "task", "assign-agent", "task-0001", "claude-primary", "--repo", str(initialized_repo)])
+
+
+def test_task_assign_agent_dry_run_flag_reaches_run_task_assign_agent(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_task_assign_agent(task_id, agent_id, repo_arg, dry_run=False):
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.task import run_task_assign_agent as real
+        return real(task_id, agent_id, repo_arg, write_log=False, dry_run=dry_run)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_assign_agent", fake_run_task_assign_agent)
+    main(["task", "assign-agent", "task-0001", "claude-primary", "--repo", str(initialized_repo), "--dry-run"])
+    assert captured_kwargs["dry_run"] is True
+
+
+def test_task_unassign_agent_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task unassign-agent")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_unassign_agent", boom)
+    exit_code = main(["task", "unassign-agent", "task-0001", "--repo", str(initialized_repo), "--confirm"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "simulated internal bug in task unassign-agent" in captured.err
+
+
+def test_task_unassign_agent_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task unassign-agent")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_unassign_agent", boom)
+    exit_code = main(["task", "unassign-agent", "task-0001", "--repo", str(initialized_repo), "--confirm", "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+
+
+def test_task_unassign_agent_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task unassign-agent")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_unassign_agent", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task unassign-agent"):
+        main(["--debug", "task", "unassign-agent", "task-0001", "--repo", str(initialized_repo), "--confirm"])
+
+
+def test_task_unassign_agent_confirm_and_dry_run_flags_reach_run_task_unassign_agent(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_task_unassign_agent(task_id, repo_arg, dry_run=False, confirm=False):
+        captured_kwargs["confirm"] = confirm
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.task import run_task_unassign_agent as real
+        return real(task_id, repo_arg, write_log=False, dry_run=dry_run, confirm=confirm)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_unassign_agent", fake_run_task_unassign_agent)
+    main(["task", "unassign-agent", "task-0001", "--repo", str(initialized_repo), "--confirm"])
+    assert captured_kwargs["confirm"] is True
+    assert captured_kwargs["dry_run"] is False
+
+
+def test_agent_register_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in agent register")
+
+    monkeypatch.setattr("forgeops.cli.agent_cmd.run_agent_register", boom)
+    exit_code = main(["agent", "register", "claude-primary", "--kind", "claude", "--repo", str(initialized_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in agent register" in captured.err
+    # A crash before any write must never leave a partial registry behind.
+    assert not (initialized_repo / ".agent" / "agents" / "AGENT_REGISTRY.json").exists()
+
+
+def test_agent_register_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in agent register")
+
+    monkeypatch.setattr("forgeops.cli.agent_cmd.run_agent_register", boom)
+    exit_code = main(["agent", "register", "claude-primary", "--kind", "claude", "--repo", str(initialized_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_agent_register_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in agent register")
+
+    monkeypatch.setattr("forgeops.cli.agent_cmd.run_agent_register", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in agent register"):
+        main(["--debug", "agent", "register", "claude-primary", "--kind", "claude", "--repo", str(initialized_repo)])
+
+
+def test_agent_register_dry_run_flag_reaches_run_agent_register(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_agent_register(agent_id, kind, repo_arg, dry_run=False, display_name=None):
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.agent import run_agent_register as real
+        return real(agent_id, kind, repo_arg, write_log=False, dry_run=dry_run, display_name=display_name)
+
+    monkeypatch.setattr("forgeops.cli.agent_cmd.run_agent_register", fake_run_agent_register)
+    main(["agent", "register", "claude-primary", "--kind", "claude", "--repo", str(initialized_repo), "--dry-run"])
+    assert captured_kwargs["dry_run"] is True
+
+
+def test_agent_register_display_name_flag_reaches_run_agent_register(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run_agent_register(agent_id, kind, repo_arg, dry_run=False, display_name=None):
+        captured_kwargs["display_name"] = display_name
+        from forgeops.cli.agent import run_agent_register as real
+        return real(agent_id, kind, repo_arg, write_log=False, dry_run=True, display_name=display_name)
+
+    monkeypatch.setattr("forgeops.cli.agent_cmd.run_agent_register", fake_run_agent_register)
+    main(["agent", "register", "claude-primary", "--kind", "claude", "--repo", str(initialized_repo), "--display-name", "Primary Claude", "--dry-run"])
+    assert captured_kwargs["display_name"] == "Primary Claude"
+
+
+def test_agent_show_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in agent show")
+
+    monkeypatch.setattr("forgeops.cli.agent_cmd.run_agent_show", boom)
+    exit_code = main(["agent", "show", "claude-primary", "--repo", str(initialized_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "simulated internal bug in agent show" in captured.err
+
+
+def test_agent_command_requires_a_subcommand(initialized_repo):
+    with pytest.raises(SystemExit):
+        main(["agent", "--repo", str(initialized_repo)])

@@ -655,3 +655,52 @@ creation by `worktree create` and on every ownership change) since the
 checkpoint's brief asked for an "updated timestamp" on the registry
 side and none existed - a minor, backward-compatible (`None`-default)
 schema addition rather than overloading `created_at`.
+
+## 2026-07-23 — Agent Ownership Foundation: `agent register` skips `--confirm` like `task assign`, agent-ownership logic lives inside `task_ownership.py` (not a new module), and `cli/agent.py` imports `cli/task.py`'s private `_repo_level_block` directly
+
+Three deliberate choices building `forgeops agent register|list|show`
+and `forgeops task assign-agent|unassign-agent`:
+
+1. `agent register` has no `--confirm` gate - only `--dry-run` - for
+   the same reasoning already established for `task assign` two
+   decisions above in this file: registering a new, as-yet-unreferenced
+   agent identity is additive
+   and trivially reversible in spirit (nothing else points at it yet),
+   so it follows `task create`/`worktree create`/`task assign`'s
+   no-confirm-needed shape. `task assign-agent` follows the identical
+   reasoning for the same reason `task assign` does. `task
+   unassign-agent` mirrors `task unassign`'s confirm-gated shape
+   instead, keeping the assign/unassign asymmetry consistent across
+   both the worktree- and agent-ownership layers rather than
+   introducing a third convention.
+2. The agent-assignment plan/apply functions
+   (`build_task_assign_agent_plan`/`apply_task_assign_agent`/
+   `build_task_unassign_agent_plan`/`apply_task_unassign_agent`) were
+   added directly to the existing `forgeops/state/task_ownership.py`
+   rather than a new `task_agent_ownership.py` module. This let them
+   reuse the module's existing private `_lookup_task` helper (task
+   identity/schema/terminal-status checks) verbatim instead of a second
+   copy of the same lookup logic - `_lookup_agent` was added alongside
+   `_lookup_worktree` following the exact same split (agent-intrinsic
+   eligibility in the lookup, ownership-specific "already assigned"
+   conflicts in the plan builder). Agent identity/registry code itself
+   (`agent_registry.py`, `agent_register.py`) stayed in their own new
+   modules, mirroring `worktree_registry.py`/`worktree_create.py`'s
+   separation from `task_ownership.py` exactly - only the *task-side*
+   ownership logic is unified, not the registries themselves.
+3. `forgeops/cli/agent.py` imports `forgeops.cli.task._repo_level_block`
+   directly rather than a third copy of the protected-reference-repo +
+   initialized-project checks. This is a deliberate, narrow exception to
+   this codebase's usual "each CLI module is self-contained" pattern -
+   justified because the check is identical, was already established as
+   a private module-level function (not part of any public API), and a
+   third copy would violate the checkpoint's own explicit "no duplicated
+   helpers" instruction more directly than one cross-module import does.
+
+Agent ownership and worktree ownership were also deliberately kept
+independent: assignment never blocks on a task lacking a worktree (only
+warns, `task-has-no-worktree`), since the checkpoint's brief was
+explicit that "lack of a worktree is a warning, not a blocker."
+
+See `docs/agents.md` for the full command/exit-code/lifecycle contract
+this codifies.

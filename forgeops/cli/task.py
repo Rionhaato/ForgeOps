@@ -1,20 +1,23 @@
-"""`forgeops task create|show|list|validate|close|assign|unassign` - the
-persistent Task Specification Engine plus its ownership layer. Stores
-task intent, scope, acceptance criteria, validation expectations, final
-outcome, and (this checkpoint) worktree ownership under `.agent/tasks/`,
-outside conversational context. See docs/tasks.md for the directory
-contract, ID generation, lifecycle, and explicit non-goals (no agent
-assignment, no agent execution, no parallel routing, no automatic
-worktree creation, no approvals, no merges).
+"""`forgeops task create|show|list|validate|close|assign|unassign|
+assign-agent|unassign-agent` - the persistent Task Specification Engine
+plus its worktree- and agent-ownership layers. Stores task intent,
+scope, acceptance criteria, validation expectations, final outcome,
+worktree ownership, and (this checkpoint) agent ownership under
+`.agent/tasks/`, outside conversational context. See docs/tasks.md and
+docs/agents.md for the directory contracts, ID generation, lifecycle,
+and explicit non-goals (no agent execution, no session launching, no
+parallel routing, no automatic worktree creation, no approvals, no
+merges).
 
-Follows the same shape as `forgeops/cli/worktree.py`: seven `run_*`
+Follows the same shape as `forgeops/cli/worktree.py`: nine `run_*`
 entry points sharing one `render_human`, dispatching on
-`result.command`. `task create`, `task assign`, and `task close` are
-mutating (all support `--dry-run`; `task close`/`task unassign`
-additionally require `--confirm` - `task assign` does not, mirroring
-`task create`/`worktree create`'s own no-confirm-needed, easily-reversed
-shape rather than `task close`/`worktree remove`'s destructive one) -
-`task show`/`task list`/`task validate` are read-only."""
+`result.command`. `task create`, `task assign`, `task close`, and `task
+assign-agent` are mutating without a `--confirm` requirement (only
+`--dry-run`) - additive, reversible operations, mirroring `task
+create`/`worktree create`'s own shape; `task close`/`task unassign`/
+`task unassign-agent` additionally require `--confirm`, mirroring
+`worktree remove`'s destructive-operation shape instead - `task
+show`/`task list`/`task validate` are read-only."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,8 +34,12 @@ from forgeops.state.task_close import apply_task_close, build_task_close_plan
 from forgeops.state.task_create import apply_task_create, build_task_create_plan
 from forgeops.state.task_ownership import (
     apply_task_assign,
+    apply_task_assign_agent,
     apply_task_unassign,
+    apply_task_unassign_agent,
+    build_task_assign_agent_plan,
     build_task_assign_plan,
+    build_task_unassign_agent_plan,
     build_task_unassign_plan,
 )
 from forgeops.state.task_registry import (
@@ -661,6 +668,194 @@ def run_task_unassign(
     return _finish(repo_root, "task-unassign", checks, data, exit_code, summary, clock, write_log)
 
 
+# --- task assign-agent -----------------------------------------------------------
+
+
+def run_task_assign_agent(
+    task_id: str,
+    agent_id: str,
+    repo_arg: str | None,
+    cwd: Path | None = None,
+    clock: Clock | None = None,
+    write_log: bool = True,
+    dry_run: bool = False,
+) -> CommandResult:
+    if git_version() is None:
+        return _no_git_result("task-assign-agent", clock)
+    try:
+        repo_root = resolve_repo_root(repo_arg, cwd)
+    except RepoNotFoundError as exc:
+        return _repo_not_found_result("task-assign-agent", exc, clock)
+
+    blocked = _repo_level_block(repo_root, "task-assign-agent", clock, write_log)
+    if blocked is not None:
+        return blocked
+
+    checks: list[Check] = [Check("repo-discovery", "Repository discovery", "pass", str(repo_root))]
+    plan = build_task_assign_agent_plan(repo_root, task_id, agent_id)
+
+    if plan.conflicts:
+        for c in plan.conflicts:
+            checks.append(Check(f"preflight-{c.key}", f"Preflight: {c.key}", "blocked", c.message))
+    else:
+        checks.append(Check("preflight", "Preflight", "pass", "no conflicts detected"))
+    for w in plan.warnings:
+        checks.append(Check(f"preflight-warning-{w.key}", f"Warning: {w.key}", "warning", w.message))
+
+    data: dict = {
+        "dry_run": dry_run,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "conflicts": [{"key": c.key, "message": c.message} for c in plan.conflicts],
+        "warnings": [{"key": w.key, "message": w.message} for w in plan.warnings],
+        "would_proceed": not plan.has_conflict,
+    }
+
+    if plan.has_conflict:
+        data["action"] = "blocked"
+        exit_code = exit_codes.BLOCKED
+        summary = f"task assign-agent: blocked by {len(plan.conflicts)} conflict(s) (exit {exit_code})"
+        return _finish(repo_root, "task-assign-agent", checks, data, exit_code, summary, clock, write_log)
+
+    if dry_run:
+        data["action"] = "would_assign_agent"
+        checks.append(Check(
+            "write", "Task agent assignment", "informational",
+            f"dry-run: would assign agent '{agent_id}' to task '{task_id}' - no file was written",
+        ))
+        exit_code = exit_codes.WARNINGS_PRESENT if plan.warnings else exit_codes.SUCCESS
+        summary = f"task assign-agent: dry-run, would assign {agent_id} to {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-assign-agent", checks, data, exit_code, summary, clock, write_log)
+
+    outcome = apply_task_assign_agent(repo_root, plan, clock)
+    if not outcome.ok:
+        data["action"] = "assignment_failed"
+        data["partial_state"] = outcome.partial_state
+        data["manual_recovery_recommendation"] = (
+            f"Inspect `{task_dir_for(repo_root, task_id)}/TASK.json` and the agent registry directly - "
+            "ownership may be partially updated. forgeops does not retry or force-replace automatically; "
+            "resolve manually before retrying."
+        )
+        checks.append(Check("write", "Task agent assignment", "fail", f"assignment did not fully complete: {outcome.partial_state}"))
+        exit_code = exit_codes.COMMAND_EXECUTION_FAILURE
+        summary = f"task assign-agent: assignment failed for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-assign-agent", checks, data, exit_code, summary, clock, write_log)
+
+    data["action"] = "agent_assigned"
+    data["index_written"] = outcome.index_written
+    checks.append(Check("write", "Task agent assignment", "pass", f"assigned agent '{agent_id}' to task '{task_id}'"))
+    warnings_present = bool(plan.warnings)
+    if outcome.index_error:
+        data["index_error"] = outcome.index_error
+        checks.append(Check("index-write", "Task index write", "warning", f"assignment succeeded but index was not updated: {outcome.index_error}"))
+        warnings_present = True
+    else:
+        checks.append(Check("index-write", "Task index write", "pass", "index updated"))
+    exit_code = exit_codes.WARNINGS_PRESENT if warnings_present else exit_codes.SUCCESS
+    summary = f"task assign-agent: assigned {agent_id} to {task_id} (exit {exit_code})"
+    return _finish(repo_root, "task-assign-agent", checks, data, exit_code, summary, clock, write_log)
+
+
+# --- task unassign-agent -----------------------------------------------------------
+
+
+def run_task_unassign_agent(
+    task_id: str,
+    repo_arg: str | None,
+    cwd: Path | None = None,
+    clock: Clock | None = None,
+    write_log: bool = True,
+    dry_run: bool = False,
+    confirm: bool = False,
+) -> CommandResult:
+    if git_version() is None:
+        return _no_git_result("task-unassign-agent", clock)
+    try:
+        repo_root = resolve_repo_root(repo_arg, cwd)
+    except RepoNotFoundError as exc:
+        return _repo_not_found_result("task-unassign-agent", exc, clock)
+
+    blocked = _repo_level_block(repo_root, "task-unassign-agent", clock, write_log)
+    if blocked is not None:
+        return blocked
+
+    checks: list[Check] = [Check("repo-discovery", "Repository discovery", "pass", str(repo_root))]
+    plan = build_task_unassign_agent_plan(repo_root, task_id)
+
+    if plan.conflicts:
+        for c in plan.conflicts:
+            checks.append(Check(f"preflight-{c.key}", f"Preflight: {c.key}", "blocked", c.message))
+    else:
+        checks.append(Check("preflight", "Preflight", "pass", "no conflicts detected"))
+
+    data: dict = {
+        "dry_run": dry_run,
+        "confirm": confirm,
+        "task_id": task_id,
+        "current_agent": plan.task_record.agent_id if plan.task_record else None,
+        "conflicts": [{"key": c.key, "message": c.message} for c in plan.conflicts],
+        "would_proceed": not plan.has_conflict,
+    }
+
+    if plan.has_conflict:
+        data["action"] = "blocked"
+        exit_code = exit_codes.BLOCKED
+        summary = f"task unassign-agent: blocked by {len(plan.conflicts)} conflict(s) (exit {exit_code})"
+        return _finish(repo_root, "task-unassign-agent", checks, data, exit_code, summary, clock, write_log)
+
+    if dry_run:
+        data["action"] = "would_unassign_agent"
+        checks.append(Check(
+            "write", "Task agent unassignment", "informational",
+            f"dry-run: would unassign agent '{data['current_agent']}' from task '{task_id}' - no file was written",
+        ))
+        exit_code = exit_codes.SUCCESS
+        summary = f"task unassign-agent: dry-run, would unassign {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-unassign-agent", checks, data, exit_code, summary, clock, write_log)
+
+    if not confirm:
+        data["action"] = "confirmation_required"
+        checks.append(Check(
+            "confirmation-required", "Confirmation required", "blocked",
+            "unassignment is a mutating operation - pass --confirm to execute, or --dry-run to preview with zero mutation",
+        ))
+        exit_code = exit_codes.BLOCKED
+        summary = f"task unassign-agent: confirmation required for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-unassign-agent", checks, data, exit_code, summary, clock, write_log)
+
+    outcome = apply_task_unassign_agent(repo_root, plan, clock)
+    if not outcome.ok:
+        data["action"] = "unassignment_failed"
+        data["partial_state"] = outcome.partial_state
+        data["manual_recovery_recommendation"] = (
+            f"Inspect `{task_dir_for(repo_root, task_id)}/TASK.json` and the agent registry directly - "
+            "ownership may be partially updated. forgeops does not retry or force-replace automatically; "
+            "resolve manually before retrying."
+        )
+        checks.append(Check("write", "Task agent unassignment", "fail", f"unassignment did not fully complete: {outcome.partial_state}"))
+        exit_code = exit_codes.COMMAND_EXECUTION_FAILURE
+        summary = f"task unassign-agent: unassignment failed for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-unassign-agent", checks, data, exit_code, summary, clock, write_log)
+
+    data["action"] = "agent_unassigned"
+    data["index_written"] = outcome.index_written
+    checks.append(Check("write", "Task agent unassignment", "pass", f"unassigned agent from task '{task_id}'"))
+    if not outcome.agent_registry_written:
+        checks.append(Check(
+            "agent-registry-note", "Agent registry", "informational",
+            "no matching agent registry record was found to clear - only TASK.json was updated",
+        ))
+    if outcome.index_error:
+        data["index_error"] = outcome.index_error
+        checks.append(Check("index-write", "Task index write", "warning", f"unassignment succeeded but index was not updated: {outcome.index_error}"))
+        exit_code = exit_codes.WARNINGS_PRESENT
+    else:
+        checks.append(Check("index-write", "Task index write", "pass", "index updated"))
+        exit_code = exit_codes.SUCCESS
+    summary = f"task unassign-agent: unassigned {task_id} (exit {exit_code})"
+    return _finish(repo_root, "task-unassign-agent", checks, data, exit_code, summary, clock, write_log)
+
+
 # --- shared -----------------------------------------------------------------
 
 
@@ -704,6 +899,10 @@ def render_human(result: CommandResult) -> str:
         return _render_human_assign(result)
     if result.command == "task-unassign":
         return _render_human_unassign(result)
+    if result.command == "task-assign-agent":
+        return _render_human_assign_agent(result)
+    if result.command == "task-unassign-agent":
+        return _render_human_unassign_agent(result)
     return _render_human_close(result)
 
 
@@ -749,7 +948,10 @@ def _render_human_show(result: CommandResult) -> str:
     lines.append(f"blockers: {task.get('blockers')}")
     worktree_id = task.get("worktree_id")
     ownership_state = "assigned" if worktree_id else "unassigned"
-    lines.append(f"assigned worktree: {worktree_id}  ownership: {ownership_state}  agent_id: {task.get('agent_id')}")
+    lines.append(f"assigned worktree: {worktree_id}  ownership: {ownership_state}")
+    agent_id = task.get("agent_id")
+    agent_ownership_state = "assigned" if agent_id else "unassigned"
+    lines.append(f"assigned agent: {agent_id}  agent ownership: {agent_ownership_state}")
     lines.append(f"approval_state: {task.get('approval_state')}")
     lines.append(f"validation status: {validation.get('status')}")
     lines.append(f"result present: {d.get('result_present')}")
@@ -771,7 +973,7 @@ def _render_human_list(result: CommandResult) -> str:
             lines.append(
                 f"- {t['task_id']}: {t['title']} [{t['status']}] "
                 f"approval={t['approval_state']} validation={t['validation_state']} result={t['result_state']} "
-                f"assigned_worktree={t['worktree_id']} agent={t['agent_id']} updated={t['updated_at']}"
+                f"assigned_worktree={t['worktree_id']} assigned_agent={t['agent_id']} updated={t['updated_at']}"
             )
     return "\n".join(lines)
 
@@ -811,6 +1013,46 @@ def _render_human_unassign(result: CommandResult) -> str:
     d = result.data
     lines.append("")
     lines.append(f"task: {d.get('task_id')}  current worktree: {d.get('current_worktree')}")
+    lines.append(f"would proceed: {d.get('would_proceed')}")
+    if d.get("conflicts"):
+        lines.append("conflicts:")
+        for c in d["conflicts"]:
+            lines.append(f"  - {c['key']}: {c['message']}")
+    if d.get("partial_state") is not None:
+        lines.append(f"partial state after failure: {d['partial_state']}")
+        lines.append(f"recovery: {d.get('manual_recovery_recommendation')}")
+    return "\n".join(lines)
+
+
+def _render_human_assign_agent(result: CommandResult) -> str:
+    from forgeops.cli.render import render_checks
+    lines = ["forgeops task assign-agent", f"summary: {result.summary}", ""]
+    lines.extend(render_checks(result.checks))
+    d = result.data
+    lines.append("")
+    lines.append(f"task: {d.get('task_id')}  agent: {d.get('agent_id')}")
+    lines.append(f"would proceed: {d.get('would_proceed')}")
+    if d.get("conflicts"):
+        lines.append("conflicts:")
+        for c in d["conflicts"]:
+            lines.append(f"  - {c['key']}: {c['message']}")
+    if d.get("warnings"):
+        lines.append("warnings:")
+        for w in d["warnings"]:
+            lines.append(f"  - {w['key']}: {w['message']}")
+    if d.get("partial_state") is not None:
+        lines.append(f"partial state after failure: {d['partial_state']}")
+        lines.append(f"recovery: {d.get('manual_recovery_recommendation')}")
+    return "\n".join(lines)
+
+
+def _render_human_unassign_agent(result: CommandResult) -> str:
+    from forgeops.cli.render import render_checks
+    lines = ["forgeops task unassign-agent", f"summary: {result.summary}", ""]
+    lines.extend(render_checks(result.checks))
+    d = result.data
+    lines.append("")
+    lines.append(f"task: {d.get('task_id')}  current agent: {d.get('current_agent')}")
     lines.append(f"would proceed: {d.get('would_proceed')}")
     if d.get("conflicts"):
         lines.append("conflicts:")

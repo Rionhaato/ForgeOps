@@ -6,6 +6,77 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Agent Ownership Foundation
+- Implemented persistent, declarative agent identity: `forgeops agent
+  register AGENT_ID --kind KIND` (mutating, no `--confirm` required -
+  only `--dry-run`, mirroring `task create`/`worktree create`'s own
+  additive shape), `forgeops agent list` and `forgeops agent show`
+  (both read-only). Deliberately does not implement launching Claude
+  Code or Codex, executing a prompt, invoking a subagent, opening or
+  monitoring a session/process, probing an installed CLI, authenticating
+  an account, agent disable/enable, agent deletion, or capability
+  population/inference - see `docs/agents.md` "Explicit non-goals".
+- New registry: `.agent/agents/AGENT_REGISTRY.json`
+  (`forgeops/state/agent_registry.py`, atomic, schema-versioned, single
+  flat file - no per-agent directory - mirrors
+  `worktree_registry.py`'s/`task_registry.py`'s fail-whole-document-
+  closed-on-any-bad-record safety). Each record: `agent_id`, `kind`
+  (one of `claude`/`codex`/`specialist`/`rocky`), `display_name`,
+  `status` (`registered` - the only status this checkpoint ever writes
+  - or `disabled`, recognized but unreachable via any command yet),
+  `capabilities` (always `[]` - declarative strings only, never probed
+  or inferred), `assigned_task_id`, `created_at`/`updated_at`,
+  `metadata` (always `{}`).
+- Agent IDs are user-supplied, never auto-generated: lowercase letters,
+  digits, `-`, `_` only, length-limited, rejected outright (never
+  sanitized) on any violation - the same allow-list philosophy
+  `forgeops/worktrees/naming.py:validate_worktree_name` and
+  `forgeops/state/task_registry.py:validate_task_id` already
+  established. Both the agent ID and display name are secret-scanned
+  before persistence; a match blocks registration outright.
+- Extended task-to-worktree ownership (`forgeops/state/task_ownership.py`)
+  with a parallel task-to-agent layer: `forgeops task assign-agent
+  TASK_ID AGENT_ID` (mutating, no `--confirm` required) and `forgeops
+  task unassign-agent TASK_ID` (mutating, confirmation-gated via
+  `--confirm`, `--dry-run` supported, double-unassignment refused just
+  like `task unassign`). One-to-one in both directions, stored only
+  through `TASK.json.agent_id` and `AGENT_REGISTRY.json`'s
+  `assigned_task_id` (both previously reserved, always `null`) - no
+  secondary ownership database. Assignment preflight verifies task and
+  agent identity/eligibility (task not terminal/not already assigned,
+  agent registered/not disabled/not already assigned elsewhere,
+  `TASK_INDEX.json` already agreeing with `TASK.json`) and is re-run
+  verbatim immediately before mutating to close the TOCTOU gap.
+- Agent ownership and worktree ownership are explicitly independent
+  fields: a task with no assigned worktree yet is never blocked from
+  receiving an agent - only a non-blocking `task-has-no-worktree`
+  warning (`WARNINGS_PRESENT`) is reported, and assignment still
+  succeeds.
+- `TASK.json` and the agent's registry record are written as one atomic
+  pair on both assign and unassign - a failure on the second write
+  after the first succeeded rolls the first back and reports
+  `COMMAND_EXECUTION_FAILURE`, never a partial assignment.
+  `TASK_INDEX.json` remains bookkeeping only, updated last; its own
+  failure is `WARNINGS_PRESENT`, mirroring the established
+  `task assign`/`task close` pattern exactly.
+- Extended `forgeops task validate` with ten read-only
+  agent-ownership-consistency blockers: `agent-missing`,
+  `agent-registry-malformed`, `agent-disabled-while-assigned`,
+  `agent-reciprocal-mismatch`, `orphan-task-agent-ownership`,
+  `orphan-registry-agent-ownership`, `duplicate-agent-assignment`,
+  `invalid-agent-identifier`, `task-index-agent-mismatch`,
+  `terminal-task-with-agent`.
+- `task show`/`task list` human output gained explicit `assigned
+  agent`/`agent ownership: assigned|unassigned` and `assigned_agent=`
+  lines, alongside the existing worktree-ownership ones. JSON output
+  already exposed `TASK.json`'s `agent_id` field directly.
+- `forgeops/cli/agent.py` reuses `forgeops/cli/task.py`'s own
+  `_repo_level_block` gate (protected-reference-repo + initialized-project
+  checks) directly rather than a second copy of the same two checks -
+  the first cross-module reuse of a nominally private helper in this
+  codebase, done deliberately to avoid duplicating a single shared
+  precondition.
+
 ### Task Ownership
 - Implemented `forgeops task assign TASK_ID WORKTREE_NAME` (mutating,
   no `--confirm` required - only `--dry-run` - mirroring `task

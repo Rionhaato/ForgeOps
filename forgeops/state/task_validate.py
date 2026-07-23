@@ -18,6 +18,12 @@ from pathlib import Path
 
 from forgeops.core.paths import is_protected_reference_path
 from forgeops.security.secret_scan import scan_text
+from forgeops.state.agent_registry import (
+    AGENT_REGISTRY_RELATIVE_PATH,
+    STATUS_REGISTERED as AGENT_STATUS_REGISTERED,
+    load_agent_registry,
+    validate_agent_id,
+)
 from forgeops.state.task_registry import (
     INDEX_RELATIVE_PATH,
     RECOGNIZED_APPROVAL_STATES,
@@ -201,6 +207,8 @@ def validate_task(
             issues.extend(_check_ownership_consistency(repo_root, task_id, task_record))
         if task_record.agent_id is not None and not isinstance(task_record.agent_id, str):
             issues.append(TaskIssue("invalid-agent-field", "TASK.json agent_id must be null or a string", SEVERITY_BLOCKER))
+        else:
+            issues.extend(_check_agent_ownership_consistency(repo_root, task_id, task_record, index_record))
 
         if git_available and task_record.source_head:
             resolved = resolve_accepted_checkpoint(repo_root, task_record.accepted_checkpoint or task_record.source_head)
@@ -336,6 +344,104 @@ def _check_ownership_consistency(repo_root: Path, task_id: str, task_record: Tas
         issues.append(TaskIssue(
             "duplicate-assignment",
             f"worktree '{claiming[0].name}' claims task '{task_id}' while the task itself is assigned to a different worktree ('{worktree_id}')",
+            SEVERITY_BLOCKER,
+        ))
+
+    return issues
+
+
+def _check_agent_ownership_consistency(
+    repo_root: Path, task_id: str, task_record: TaskRecord, index_record,
+) -> list[TaskIssue]:
+    """Cross-checks `TASK.json.agent_id` against `AGENT_REGISTRY.json` in
+    both directions, and against `TASK_INDEX.json`'s own summary copy -
+    see `forgeops/state/task_ownership.py` for how `task assign-agent`/
+    `task unassign-agent` keep all three in sync, and docs/agents.md
+    "Ownership" for the one-to-one model this verifies. Read-only; never
+    repairs anything it finds inconsistent."""
+    issues: list[TaskIssue] = []
+
+    if index_record is not None and index_record.agent_id != task_record.agent_id:
+        issues.append(TaskIssue(
+            "task-index-agent-mismatch",
+            f"{INDEX_RELATIVE_PATH} agent_id '{index_record.agent_id}' does not match TASK.json agent_id '{task_record.agent_id}' for '{task_id}'",
+            SEVERITY_BLOCKER,
+        ))
+
+    registry = load_agent_registry(repo_root)
+    if registry.warning is not None:
+        issues.append(TaskIssue(
+            "agent-registry-malformed",
+            f"{AGENT_REGISTRY_RELATIVE_PATH} could not be read safely: {registry.warning}",
+            SEVERITY_BLOCKER,
+        ))
+        return issues
+
+    agent_id = task_record.agent_id
+    if agent_id is not None:
+        id_error = validate_agent_id(agent_id)
+        if id_error is not None:
+            issues.append(TaskIssue(
+                "invalid-agent-identifier",
+                f"TASK.json agent_id '{agent_id}' is not a validly-formed agent identifier: {id_error}",
+                SEVERITY_BLOCKER,
+            ))
+            agent_id = None  # not safely usable for the lookups below
+        else:
+            matches = [r for r in registry.records if r.agent_id == agent_id]
+            if not matches:
+                issues.append(TaskIssue(
+                    "agent-missing",
+                    f"task references agent '{agent_id}' which is not registered in {AGENT_REGISTRY_RELATIVE_PATH}",
+                    SEVERITY_BLOCKER,
+                ))
+            else:
+                record = matches[0]
+                if record.status != AGENT_STATUS_REGISTERED:
+                    issues.append(TaskIssue(
+                        "agent-disabled-while-assigned",
+                        f"task references agent '{agent_id}' whose status is '{record.status}', not 'registered'",
+                        SEVERITY_BLOCKER,
+                    ))
+                if record.assigned_task_id is None:
+                    issues.append(TaskIssue(
+                        "orphan-task-agent-ownership",
+                        f"task claims agent '{agent_id}' but the agent registry does not reciprocally claim this task",
+                        SEVERITY_BLOCKER,
+                    ))
+                elif record.assigned_task_id != task_id:
+                    issues.append(TaskIssue(
+                        "agent-reciprocal-mismatch",
+                        f"task claims agent '{agent_id}' but the agent registry says it is assigned to task '{record.assigned_task_id}'",
+                        SEVERITY_BLOCKER,
+                    ))
+
+        if task_record.status in TERMINAL_STATUSES:
+            issues.append(TaskIssue(
+                "terminal-task-with-agent",
+                f"task status is '{task_record.status}' but it is still assigned to agent '{task_record.agent_id}'",
+                SEVERITY_BLOCKER,
+            ))
+
+    # Bidirectional: does any agent claim this task without the task
+    # reciprocating (or reciprocating a different agent)?
+    claiming = [r for r in registry.records if r.assigned_task_id == task_id]
+    if len(claiming) > 1:
+        issues.append(TaskIssue(
+            "duplicate-agent-assignment",
+            f"more than one agent claims task '{task_id}': {', '.join(sorted(r.agent_id for r in claiming))}",
+            SEVERITY_BLOCKER,
+        ))
+    elif len(claiming) == 1 and agent_id is None:
+        issues.append(TaskIssue(
+            "orphan-registry-agent-ownership",
+            f"agent '{claiming[0].agent_id}' claims task '{task_id}' but the task's own agent_id is null",
+            SEVERITY_BLOCKER,
+        ))
+    elif len(claiming) == 1 and agent_id != claiming[0].agent_id:
+        issues.append(TaskIssue(
+            "duplicate-agent-assignment",
+            f"agent '{claiming[0].agent_id}' claims task '{task_id}' while the task itself is assigned to a different agent ('{agent_id}')",
             SEVERITY_BLOCKER,
         ))
 

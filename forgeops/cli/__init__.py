@@ -22,6 +22,7 @@ import sys
 import traceback
 from pathlib import Path
 
+from forgeops.cli import agent as agent_cmd
 from forgeops.cli import audit as audit_cmd
 from forgeops.cli import changed as changed_cmd
 from forgeops.cli import checkpoint as checkpoint_cmd
@@ -138,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="also delete the ForgeOps-owned branch via a normal, non-force `git branch -d` (requires --confirm)",
     )
 
-    task_sub = subparsers.add_parser("task", help="forgeops task create | show | list | validate | close | assign | unassign")
+    task_sub = subparsers.add_parser("task", help="forgeops task create | show | list | validate | close | assign | unassign | assign-agent | unassign-agent")
     task_subparsers = task_sub.add_subparsers(dest="task_command", required=True)
 
     task_create_sub = task_subparsers.add_parser("create", help="forgeops task create TITLE")
@@ -185,6 +186,41 @@ def build_parser() -> argparse.ArgumentParser:
     task_unassign_sub.add_argument("--json", action="store_true")
     task_unassign_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be unassigned, mutate nothing")
     task_unassign_sub.add_argument("--confirm", action="store_true", help="actually perform the unassignment (required unless --dry-run)")
+
+    task_assign_agent_sub = task_subparsers.add_parser("assign-agent", help="forgeops task assign-agent TASK_ID AGENT_ID")
+    task_assign_agent_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_assign_agent_sub.add_argument("agent_id", help="ID of an existing, registered, unassigned agent")
+    task_assign_agent_sub.add_argument("--repo", default=None)
+    task_assign_agent_sub.add_argument("--json", action="store_true")
+    task_assign_agent_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be assigned, mutate nothing")
+
+    task_unassign_agent_sub = task_subparsers.add_parser("unassign-agent", help="forgeops task unassign-agent TASK_ID")
+    task_unassign_agent_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_unassign_agent_sub.add_argument("--repo", default=None)
+    task_unassign_agent_sub.add_argument("--json", action="store_true")
+    task_unassign_agent_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be unassigned, mutate nothing")
+    task_unassign_agent_sub.add_argument("--confirm", action="store_true", help="actually perform the unassignment (required unless --dry-run)")
+
+    agent_sub = subparsers.add_parser("agent", help="forgeops agent register | list | show")
+    agent_subparsers = agent_sub.add_subparsers(dest="agent_command", required=True)
+
+    agent_register_sub = agent_subparsers.add_parser("register", help="forgeops agent register AGENT_ID --kind KIND")
+    agent_register_sub.add_argument("agent_id", help="agent identifier - lowercase letters, digits, '-', '_' only")
+    agent_register_sub.add_argument("--kind", required=True, help="one of: claude, codex, specialist, rocky")
+    agent_register_sub.add_argument("--display-name", dest="display_name", default=None, help="human-readable name (default: the agent ID itself)")
+    agent_register_sub.add_argument("--repo", default=None)
+    agent_register_sub.add_argument("--json", action="store_true")
+    agent_register_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be registered, write nothing")
+
+    agent_list_sub = agent_subparsers.add_parser("list", help="forgeops agent list")
+    agent_list_sub.add_argument("--repo", default=None)
+    agent_list_sub.add_argument("--json", action="store_true")
+    agent_list_sub.add_argument("--kind", dest="kind_filter", default=None, help="only show agents of this exact kind")
+
+    agent_show_sub = agent_subparsers.add_parser("show", help="forgeops agent show AGENT_ID")
+    agent_show_sub.add_argument("agent_id", help="agent ID")
+    agent_show_sub.add_argument("--repo", default=None)
+    agent_show_sub.add_argument("--json", action="store_true")
 
     for name in NOT_YET_IMPLEMENTED_COMMANDS:
         sub = subparsers.add_parser(name, help=f"forgeops {name} (not yet implemented)")
@@ -281,9 +317,21 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
             return task_cmd.run_task_assign(args.task_id, args.worktree_name, args.repo, dry_run=args.dry_run)
         if args.task_command == "unassign":
             return task_cmd.run_task_unassign(args.task_id, args.repo, dry_run=args.dry_run, confirm=args.confirm)
+        if args.task_command == "assign-agent":
+            return task_cmd.run_task_assign_agent(args.task_id, args.agent_id, args.repo, dry_run=args.dry_run)
+        if args.task_command == "unassign-agent":
+            return task_cmd.run_task_unassign_agent(args.task_id, args.repo, dry_run=args.dry_run, confirm=args.confirm)
         return task_cmd.run_task_close(
             args.task_id, args.repo, dry_run=args.dry_run, confirm=args.confirm, result_file=args.result_file,
         )
+    if args.command == "agent":
+        if args.agent_command == "register":
+            return agent_cmd.run_agent_register(
+                args.agent_id, args.kind, args.repo, dry_run=args.dry_run, display_name=args.display_name,
+            )
+        if args.agent_command == "list":
+            return agent_cmd.run_agent_list(args.repo, kind_filter=args.kind_filter)
+        return agent_cmd.run_agent_show(args.agent_id, args.repo)
     # Resolved via getattr on the module, not a pre-bound reference, so
     # that monkeypatching e.g. forgeops.cli.doctor_cmd.run_doctor (the
     # normal way tests substitute behavior) actually takes effect - a
@@ -317,6 +365,8 @@ def _render_result(args: argparse.Namespace, result: CommandResult) -> str:
         return worktree_cmd.render_human(result)
     if args.command == "task":
         return task_cmd.render_human(result)
+    if args.command == "agent":
+        return agent_cmd.render_human(result)
     module = _SIMPLE_MODULES[args.command]
     return module.render_human(result)
 
@@ -335,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dispatchable = args.command in _SIMPLE_MODULES or args.command in (
         "changed", "test", "release-check", "checkpoint", "handoff",
-        "process-list", "cleanup", "resume-context", "init", "worktree", "task",
+        "process-list", "cleanup", "resume-context", "init", "worktree", "task", "agent",
     )
     if not dispatchable:
         print(

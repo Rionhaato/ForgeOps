@@ -6,6 +6,36 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Package Namespace Cleanup
+- Removed two vestigial one-line packages, `forgeops/agents/` and
+  `forgeops/approvals/`, created by the Phase 1 scaffolding commit
+  (`c00b66e`). Their docstrings advertised responsibilities — agent
+  ownership/coordination and approval queueing/gating — that were
+  actually implemented under `forgeops/state/` and `forgeops/cli/`,
+  leaving two empty packages competing with the live implementation.
+  Verified unused before removal: `git grep` found **zero** references
+  to either path in any tracked file (no imports, docs, packaging
+  entry, plugin/installer/example, or `.agent` state); the only
+  occurrences were in gitignored `logs/`.
+- No compatibility shims were added — no import path was ever promised
+  or used, so a re-export layer would have recreated the same
+  second-home hazard. `forgeops/hooks/` and `forgeops/integrations/`
+  are **kept**: they name features nobody has built yet, so an empty
+  package there is an honest placeholder rather than a competing claim.
+- Canonical ownership is now documented explicitly in
+  `docs/cli-architecture.md` ("Package ownership"), `docs/agents.md`
+  and `docs/approvals.md` ("Where this lives").
+- **No behavior change.** All CLI command names, subcommand
+  registration, task/agent state schemas, approval-history behavior,
+  atomic writes, exit codes, secret-safety behavior, and the
+  zero-runtime-dependency guarantee are unchanged. The top-level
+  `forgeops agents` / `forgeops approvals` **commands** are unrelated
+  placeholder commands and were not touched.
+- Added `tests/unit/test_package_namespaces.py` (18 tests) locking in
+  the removal, the canonical owners' public symbols, the surviving
+  placeholders, unchanged CLI registration, and the empty
+  `dependencies` list.
+
 ### Task Approval Foundation
 - Implemented persistent, purely declarative human approval state for
   an *existing* task: `forgeops task request-approval TASK_ID --actor

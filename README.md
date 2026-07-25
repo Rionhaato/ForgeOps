@@ -182,9 +182,13 @@ session launching, disable/enable, or deletion yet, see
 
 ## Layout
 
-- `forgeops/` — the Python package: CLI, core repo/state logic, detectors,
-  hook backends, testing selection, security scanning, agent/worktree
-  coordination, reporting, integration profiles, and approvals.
+- `forgeops/` — the Python package: `cli/` (thin handlers), `core/`,
+  `detectors/`, `security/`, `state/`, `worktrees/`, `testing/`,
+  `reporting/`. Agent identity/ownership and task approvals live under
+  `forgeops/state/` (with their handlers in `forgeops/cli/`), not in
+  packages named after them — see `docs/cli-architecture.md` "Package
+  ownership". `hooks/` and `integrations/` are placeholders for features
+  not yet built.
 - `shared/` — skill and agent definitions, project-instruction templates,
   and JSON schemas shared between the Claude and Codex plugin packages.
 - `claude-plugin/` — the installable Claude Code plugin (agents, skills,

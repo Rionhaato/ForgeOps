@@ -6,6 +6,26 @@ cancelling a pending approval request, plus read-only presentation and
 validation - see "Explicit non-goals" below for what is deliberately
 out of scope.
 
+## Where this lives
+
+There is no `forgeops/approvals/` package. The canonical implementation
+is:
+
+- `forgeops/state/task_registry.py` - approval states, the closed
+  `APPROVAL_TRANSITIONS` table, `ApprovalEvent`, `approval_history`,
+  `validate_actor`
+- `forgeops/state/task_approval.py` - preflight-plan builders and the
+  mutating apply steps for all four commands
+- `forgeops/state/task_validate.py` - read-only approval-consistency checks
+- `forgeops/cli/task.py` - the four `run_task_*` handlers
+
+An empty `forgeops/approvals/` package created by the Phase 1
+scaffolding once claimed this responsibility; it was removed because the
+work landed under `forgeops/state/` and nothing ever imported it. Note
+that the separate top-level `forgeops approvals` **command** is a
+pre-existing not-yet-implemented placeholder and is unrelated. See
+`docs/cli-architecture.md` "Package ownership".
+
 ## Commands
 
 ```

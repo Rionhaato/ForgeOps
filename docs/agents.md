@@ -5,6 +5,22 @@ ownership. This checkpoint implements only registration, listing,
 showing, assignment, and unassignment - see "Explicit non-goals" below
 for what is deliberately out of scope.
 
+## Where this lives
+
+There is no `forgeops/agents/` package. The canonical implementation is:
+
+- `forgeops/state/agent_registry.py` - `AGENT_REGISTRY.json` schema,
+  atomic load/save, `agent_id` validation
+- `forgeops/state/agent_register.py` - `agent register` preflight + write
+- `forgeops/state/task_ownership.py` - task↔agent assignment/unassignment
+- `forgeops/state/task_validate.py` - agent-ownership consistency checks
+- `forgeops/cli/agent.py` - the three `run_*` handlers
+
+An empty `forgeops/agents/` package created by the Phase 1 scaffolding
+once claimed this responsibility; it was removed because the work landed
+under `forgeops/state/` and nothing ever imported it. See
+`docs/cli-architecture.md` "Package ownership".
+
 ## Commands
 
 ```

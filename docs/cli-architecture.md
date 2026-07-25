@@ -69,7 +69,43 @@ forgeops/
   testing/
     planner.py              deterministic targeted- and full-test plan construction
     executor.py              sequential, bounded-timeout test-plan execution
+  hooks/                  (placeholder - deterministic backends for Claude Code lifecycle hooks, not yet built)
+  integrations/           (placeholder - disabled-by-default MCP integration profiles, not yet built)
 ```
+
+## Package ownership (why there is no `forgeops/agents/` or `forgeops/approvals/`)
+
+Agent identity/ownership and task approval logic live under
+`forgeops/state/` and `forgeops/cli/`, **not** in packages named after
+them:
+
+| Responsibility | Canonical location |
+|---|---|
+| Agent registry schema, load/save, `agent_id` validation | `forgeops/state/agent_registry.py` |
+| `forgeops agent register` preflight + write | `forgeops/state/agent_register.py` |
+| `forgeops agent register\|list\|show` handlers | `forgeops/cli/agent.py` |
+| Task↔worktree and task↔agent ownership | `forgeops/state/task_ownership.py` |
+| Approval state machine, `ApprovalEvent`, `approval_history` | `forgeops/state/task_registry.py` |
+| `forgeops task request-approval\|approve\|reject\|cancel-approval` preflight + apply | `forgeops/state/task_approval.py` |
+| Approval/ownership consistency checks | `forgeops/state/task_validate.py` |
+
+The Phase 1 scaffolding commit (`c00b66e`) created two one-line packages,
+`forgeops/agents/` and `forgeops/approvals/`, whose docstrings claimed
+those responsibilities. The work landed under `forgeops/state/` instead,
+leaving two empty packages advertising features implemented elsewhere.
+They were never imported and never documented as a public import path,
+so they were removed rather than kept as compatibility shims - see
+`.agent/DECISIONS.md`. `tests/unit/test_package_namespaces.py` locks
+this in.
+
+`forgeops/hooks/` and `forgeops/integrations/` are deliberately **kept**:
+they are forward-looking placeholders for features nobody has built yet,
+which is honest, rather than names competing with a live implementation.
+
+Note that the top-level CLI commands `forgeops agents` and `forgeops
+approvals` are unrelated to the removed Python packages - they are
+pre-existing not-yet-implemented placeholder *commands* and are
+unchanged.
 
 Every command module (`doctor.py`/`status.py`/`audit.py`/`changed.py`)
 exposes two functions: `run_<command>(repo_arg, cwd=None, clock=None,

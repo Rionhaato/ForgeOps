@@ -760,3 +760,57 @@ request-approval|approve|reject|cancel-approval`:
 
 See `docs/approvals.md` for the full command/exit-code/state-machine
 contract this codifies.
+
+## 2026-07-25 — Vestigial `forgeops/agents/` and `forgeops/approvals/` packages removed outright rather than kept as compatibility namespaces
+
+The Phase 1 scaffolding commit (`c00b66e`) created two packages whose
+one-line docstrings claimed responsibilities — "Task ownership and
+file-lock coordination for concurrent agents" and "Approval queue and
+gating for security-sensitive actions" — that were subsequently
+implemented somewhere else entirely: `forgeops/state/agent_registry.py`,
+`agent_register.py`, `task_ownership.py`, `task_approval.py`,
+`task_validate.py`, and `forgeops/cli/agent.py`. Both packages sat empty
+for the whole build, advertising features that lived at different paths.
+
+**Decision: delete both, do not retain compatibility shims.**
+
+1. **Evidence that deletion is safe, not assumed.** `git grep` across
+   every *tracked* file found zero references to `forgeops.agents`,
+   `forgeops.approvals`, `forgeops/agents`, or `forgeops/approvals` —
+   no imports, no docs, no packaging entry, no plugin/installer/example
+   reference, no `.agent` state. The only occurrences anywhere were in
+   gitignored `logs/` (an audit command enumerating `__pycache__`
+   directories that happened to exist on disk). Packaging is unaffected:
+   `[tool.hatch.build.targets.wheel] packages = ["forgeops"]` includes
+   subpackages implicitly rather than enumerating them, and
+   `forgeops doctor` imports only the top-level `forgeops` package.
+2. **No compatibility namespace, because nothing was ever promised.**
+   A re-export shim would have created exactly the second home for
+   agent/approval logic this checkpoint exists to eliminate, and would
+   invent a public API (`forgeops.approvals.something`) that no caller
+   has ever used. Retaining an empty package "just in case" preserves
+   the navigation hazard while adding maintenance surface.
+3. **`forgeops/hooks/` and `forgeops/integrations/` are deliberately
+   kept.** The distinguishing test is not "is the package empty" but
+   "does its name compete with a live implementation elsewhere." Those
+   two name features nobody has built yet, so an empty package is an
+   honest placeholder; `agents`/`approvals` named features that were
+   already built under different paths, which is a lie the tree tells
+   every future reader.
+4. **The CLI commands `forgeops agents` and `forgeops approvals` are
+   untouched.** They are pre-existing not-yet-implemented placeholder
+   *commands* and share only a name with the removed Python packages —
+   a coincidence worth stating explicitly, since conflating the two
+   would look like a behavior regression during review.
+5. **Locked in by test, not by convention.**
+   `tests/unit/test_package_namespaces.py` asserts the retired
+   namespaces are neither importable nor discoverable via
+   `pkgutil.iter_modules`, that each retired name has a live replacement
+   module, that the canonical owners still export the symbols the CLI
+   depends on, that the intentional placeholders survive, that CLI
+   registration is byte-for-byte unchanged, and that `dependencies`
+   stays empty — so a future checkpoint cannot silently reintroduce a
+   competing namespace or pay for cleanup with a new dependency.
+
+This checkpoint introduces **no** new agent execution, authorization,
+hook, tool, or MCP behavior — it is a structural correction only.

@@ -139,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="also delete the ForgeOps-owned branch via a normal, non-force `git branch -d` (requires --confirm)",
     )
 
-    task_sub = subparsers.add_parser("task", help="forgeops task create | show | list | validate | close | assign | unassign | assign-agent | unassign-agent")
+    task_sub = subparsers.add_parser("task", help="forgeops task create | show | list | validate | close | assign | unassign | assign-agent | unassign-agent | request-approval | approve | reject | cancel-approval")
     task_subparsers = task_sub.add_subparsers(dest="task_command", required=True)
 
     task_create_sub = task_subparsers.add_parser("create", help="forgeops task create TITLE")
@@ -200,6 +200,41 @@ def build_parser() -> argparse.ArgumentParser:
     task_unassign_agent_sub.add_argument("--json", action="store_true")
     task_unassign_agent_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be unassigned, mutate nothing")
     task_unassign_agent_sub.add_argument("--confirm", action="store_true", help="actually perform the unassignment (required unless --dry-run)")
+
+    task_request_approval_sub = task_subparsers.add_parser("request-approval", help="forgeops task request-approval TASK_ID --actor ACTOR")
+    task_request_approval_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_request_approval_sub.add_argument("--actor", required=True, help="explicit human actor requesting approval (e.g. 'joshua') - never inferred")
+    task_request_approval_sub.add_argument("--reason", default=None, help="optional free-text reason")
+    task_request_approval_sub.add_argument("--repo", default=None)
+    task_request_approval_sub.add_argument("--json", action="store_true")
+    task_request_approval_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show the planned transition, mutate nothing")
+
+    task_approve_sub = task_subparsers.add_parser("approve", help="forgeops task approve TASK_ID --actor ACTOR")
+    task_approve_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_approve_sub.add_argument("--actor", required=True, help="explicit human actor approving the task - never inferred")
+    task_approve_sub.add_argument("--reason", default=None, help="optional free-text reason")
+    task_approve_sub.add_argument("--repo", default=None)
+    task_approve_sub.add_argument("--json", action="store_true")
+    task_approve_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show the planned transition, mutate nothing")
+    task_approve_sub.add_argument("--confirm", action="store_true", help="actually perform the approval (required unless --dry-run)")
+
+    task_reject_sub = task_subparsers.add_parser("reject", help="forgeops task reject TASK_ID --actor ACTOR --reason TEXT")
+    task_reject_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_reject_sub.add_argument("--actor", required=True, help="explicit human actor rejecting the task - never inferred")
+    task_reject_sub.add_argument("--reason", default=None, help="reason for rejection (required to actually reject)")
+    task_reject_sub.add_argument("--repo", default=None)
+    task_reject_sub.add_argument("--json", action="store_true")
+    task_reject_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show the planned transition, mutate nothing")
+    task_reject_sub.add_argument("--confirm", action="store_true", help="actually perform the rejection (required unless --dry-run)")
+
+    task_cancel_approval_sub = task_subparsers.add_parser("cancel-approval", help="forgeops task cancel-approval TASK_ID --actor ACTOR")
+    task_cancel_approval_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_cancel_approval_sub.add_argument("--actor", required=True, help="explicit human actor cancelling the pending request - never inferred")
+    task_cancel_approval_sub.add_argument("--reason", default=None, help="optional free-text reason")
+    task_cancel_approval_sub.add_argument("--repo", default=None)
+    task_cancel_approval_sub.add_argument("--json", action="store_true")
+    task_cancel_approval_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show the planned transition, mutate nothing")
+    task_cancel_approval_sub.add_argument("--confirm", action="store_true", help="actually perform the cancellation (required unless --dry-run)")
 
     agent_sub = subparsers.add_parser("agent", help="forgeops agent register | list | show")
     agent_subparsers = agent_sub.add_subparsers(dest="agent_command", required=True)
@@ -321,6 +356,22 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
             return task_cmd.run_task_assign_agent(args.task_id, args.agent_id, args.repo, dry_run=args.dry_run)
         if args.task_command == "unassign-agent":
             return task_cmd.run_task_unassign_agent(args.task_id, args.repo, dry_run=args.dry_run, confirm=args.confirm)
+        if args.task_command == "request-approval":
+            return task_cmd.run_task_request_approval(
+                args.task_id, args.repo, actor=args.actor, reason=args.reason, dry_run=args.dry_run,
+            )
+        if args.task_command == "approve":
+            return task_cmd.run_task_approve(
+                args.task_id, args.repo, actor=args.actor, reason=args.reason, dry_run=args.dry_run, confirm=args.confirm,
+            )
+        if args.task_command == "reject":
+            return task_cmd.run_task_reject(
+                args.task_id, args.repo, actor=args.actor, reason=args.reason, dry_run=args.dry_run, confirm=args.confirm,
+            )
+        if args.task_command == "cancel-approval":
+            return task_cmd.run_task_cancel_approval(
+                args.task_id, args.repo, actor=args.actor, reason=args.reason, dry_run=args.dry_run, confirm=args.confirm,
+            )
         return task_cmd.run_task_close(
             args.task_id, args.repo, dry_run=args.dry_run, confirm=args.confirm, result_file=args.result_file,
         )

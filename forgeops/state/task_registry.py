@@ -75,13 +75,103 @@ TERMINAL_STATUSES = frozenset({STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED
 # already terminal is refused (no reopening in this checkpoint).
 CLOSEABLE_STATUSES = RECOGNIZED_STATUSES - TERMINAL_STATUSES
 
-# `TASK.json.approval_state` - always written as `not_requested` by this
-# checkpoint (no approvals checkpoint exists yet to produce another
-# value); recognized as a single-member set now so `task validate`
-# already has somewhere principled to check against once a future
-# checkpoint adds more values, without a schema migration here.
+# `TASK.json.approval_state` - a small, closed state machine for
+# persistent *human* approval of an existing task. Nothing here executes
+# a task, launches an agent, or changes `TASK.json.status` - approval is
+# an independent, purely declarative signal (see `forgeops/state/task_approval.py`
+# and docs/approvals.md).
 APPROVAL_STATE_NOT_REQUESTED = "not_requested"
-RECOGNIZED_APPROVAL_STATES = frozenset({APPROVAL_STATE_NOT_REQUESTED})
+APPROVAL_STATE_PENDING = "pending"
+APPROVAL_STATE_APPROVED = "approved"
+APPROVAL_STATE_REJECTED = "rejected"
+RECOGNIZED_APPROVAL_STATES = frozenset({
+    APPROVAL_STATE_NOT_REQUESTED, APPROVAL_STATE_PENDING,
+    APPROVAL_STATE_APPROVED, APPROVAL_STATE_REJECTED,
+})
+
+# `approval_history[].action` - one event per successful approval
+# mutation, append-only, never edited or deleted.
+APPROVAL_ACTION_REQUESTED = "requested"
+APPROVAL_ACTION_APPROVED = "approved"
+APPROVAL_ACTION_REJECTED = "rejected"
+APPROVAL_ACTION_CANCELLED = "cancelled"
+RECOGNIZED_APPROVAL_ACTIONS = frozenset({
+    APPROVAL_ACTION_REQUESTED, APPROVAL_ACTION_APPROVED,
+    APPROVAL_ACTION_REJECTED, APPROVAL_ACTION_CANCELLED,
+})
+
+# The complete, closed set of permitted (current_state, action) ->
+# next_state transitions - a lookup miss means "refused", not "assumed
+# invalid input"; see docs/approvals.md "State machine" for the diagram
+# this codifies. Deliberately excludes any reopening beyond
+# rejected -> pending via a fresh request-approval.
+APPROVAL_TRANSITIONS: dict[tuple[str, str], str] = {
+    (APPROVAL_STATE_NOT_REQUESTED, APPROVAL_ACTION_REQUESTED): APPROVAL_STATE_PENDING,
+    (APPROVAL_STATE_REJECTED, APPROVAL_ACTION_REQUESTED): APPROVAL_STATE_PENDING,
+    (APPROVAL_STATE_PENDING, APPROVAL_ACTION_APPROVED): APPROVAL_STATE_APPROVED,
+    (APPROVAL_STATE_PENDING, APPROVAL_ACTION_REJECTED): APPROVAL_STATE_REJECTED,
+    (APPROVAL_STATE_PENDING, APPROVAL_ACTION_CANCELLED): APPROVAL_STATE_NOT_REQUESTED,
+}
+
+# `approval_history[].actor` - an explicit, human-supplied `--actor`
+# value (never inferred from an OS/session identity). Identifier-safe
+# and length-limited, mirroring `validate_agent_id`'s reject-don't-
+# sanitize philosophy, but a little more permissive (spaces, '.', '@')
+# since an actor is a human-readable name, not a filesystem path segment.
+ACTOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._@-]*$")
+MAX_ACTOR_LENGTH = 100
+MAX_APPROVAL_REASON_LENGTH = 2000
+
+
+def validate_actor(actor: str) -> str | None:
+    """Return None if `actor` is a valid, unambiguous approval actor, or
+    a human-readable rejection reason otherwise. Never mutates `actor` -
+    rejected outright, never sanitized. Secret-shape scanning of the
+    value is a separate, additional check performed by the caller
+    (`forgeops.state.task_approval`), not here."""
+    if not actor or not actor.strip():
+        return "actor must not be empty"
+    if len(actor) > MAX_ACTOR_LENGTH:
+        return f"actor must be at most {MAX_ACTOR_LENGTH} characters"
+    if not ACTOR_RE.match(actor):
+        return (
+            "actor must start with a letter or digit and contain only letters, digits, "
+            "spaces, '.', '@', '-', or '_' (rejected rather than sanitized, to avoid "
+            "silently changing its meaning)"
+        )
+    return None
+
+
+@dataclass(frozen=True)
+class ApprovalEvent:
+    action: str
+    actor: str
+    timestamp: str
+    reason: str = ""
+    reference: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action": self.action,
+            "actor": self.actor,
+            "timestamp": self.timestamp,
+            "reason": self.reason,
+            "reference": self.reference,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "ApprovalEvent":
+        if not isinstance(data, dict):
+            raise ValueError("approval_history entry must be an object")
+        if "action" not in data:
+            raise ValueError("approval_history entry is missing required field 'action'")
+        return ApprovalEvent(
+            action=str(data["action"]),
+            actor=str(data.get("actor", "")),
+            timestamp=str(data.get("timestamp", "")),
+            reason=str(data.get("reason", "")),
+            reference=data.get("reference"),
+        )
 
 # `VALIDATION.json.status`.
 VALIDATION_STATUS_NOT_RUN = "not_run"
@@ -264,6 +354,7 @@ class TaskRecord:
     worktree_id: str | None = None
     agent_id: str | None = None
     approval_state: str = APPROVAL_STATE_NOT_REQUESTED
+    approval_history: list[ApprovalEvent] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
     managed_files: list[str] = field(default_factory=list)
@@ -287,6 +378,7 @@ class TaskRecord:
             "worktree_id": self.worktree_id,
             "agent_id": self.agent_id,
             "approval_state": self.approval_state,
+            "approval_history": [e.to_dict() for e in self.approval_history],
             "blockers": list(self.blockers),
             "dependencies": list(self.dependencies),
             "managed_files": list(self.managed_files),
@@ -296,6 +388,9 @@ class TaskRecord:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "TaskRecord":
+        raw_history = data.get("approval_history") or []
+        if not isinstance(raw_history, list):
+            raise ValueError("approval_history must be a list")
         return TaskRecord(
             schema_version=int(data.get("schema_version", TASK_SCHEMA_VERSION)),
             task_id=str(data["task_id"]),
@@ -312,6 +407,7 @@ class TaskRecord:
             worktree_id=data.get("worktree_id"),
             agent_id=data.get("agent_id"),
             approval_state=str(data.get("approval_state", APPROVAL_STATE_NOT_REQUESTED)),
+            approval_history=[ApprovalEvent.from_dict(e) for e in raw_history],
             blockers=list(data.get("blockers") or []),
             dependencies=list(data.get("dependencies") or []),
             managed_files=list(data.get("managed_files") or []),

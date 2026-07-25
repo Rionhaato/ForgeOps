@@ -32,6 +32,16 @@ from forgeops.reporting.logs import LogWriter
 from forgeops.state.schema import check_current_state
 from forgeops.state.task_close import apply_task_close, build_task_close_plan
 from forgeops.state.task_create import apply_task_create, build_task_create_plan
+from forgeops.state.task_approval import (
+    apply_task_approve,
+    apply_task_cancel_approval,
+    apply_task_reject,
+    apply_task_request_approval,
+    build_task_approve_plan,
+    build_task_cancel_approval_plan,
+    build_task_reject_plan,
+    build_task_request_approval_plan,
+)
 from forgeops.state.task_ownership import (
     apply_task_assign,
     apply_task_assign_agent,
@@ -856,6 +866,338 @@ def run_task_unassign_agent(
     return _finish(repo_root, "task-unassign-agent", checks, data, exit_code, summary, clock, write_log)
 
 
+# --- task request-approval / approve / reject / cancel-approval --------------------
+
+
+def _handle_approval_outcome(
+    repo_root: Path, command: str, label: str, task_id: str,
+    checks: list[Check], data: dict, outcome, clock: Clock | None, write_log: bool,
+) -> CommandResult:
+    """Shared success/failure handling for all four approval-mutating
+    commands. Unlike `task assign`/`task assign-agent`, a successful
+    outcome here is never partial: `apply_task_*` in
+    `forgeops.state.task_approval` treats `TASK.json` and
+    `TASK_INDEX.json` as an atomic pair and rolls back on the second
+    write's failure, so `outcome.ok` is either "both written" or
+    "neither retained" - no warning-only branch is possible."""
+    if not outcome.ok:
+        data["action"] = "approval_action_failed"
+        data["partial_state"] = outcome.partial_state
+        data["manual_recovery_recommendation"] = (
+            f"Inspect `{task_dir_for(repo_root, task_id)}/TASK.json` and `.agent/tasks/TASK_INDEX.json` directly - "
+            "approval state may be partially updated. forgeops does not retry or force-replace automatically; "
+            "resolve manually before retrying."
+        )
+        checks.append(Check("write", label, "fail", f"{label.lower()} did not fully complete: {outcome.partial_state}"))
+        exit_code = exit_codes.COMMAND_EXECUTION_FAILURE
+        summary = f"{command.replace('-', ' ')}: failed for {task_id} (exit {exit_code})"
+        return _finish(repo_root, command, checks, data, exit_code, summary, clock, write_log)
+
+    data["action"] = "approval_state_changed"
+    data["new_approval_state"] = outcome.new_approval_state
+    data["index_written"] = outcome.index_written
+    checks.append(Check("write", label, "pass", f"'{task_id}' approval_state is now '{outcome.new_approval_state}'"))
+    checks.append(Check("index-write", "Task index write", "pass", "index updated"))
+    exit_code = exit_codes.SUCCESS
+    summary = f"{command.replace('-', ' ')}: {task_id} approval_state is now '{outcome.new_approval_state}' (exit {exit_code})"
+    return _finish(repo_root, command, checks, data, exit_code, summary, clock, write_log)
+
+
+def run_task_request_approval(
+    task_id: str,
+    repo_arg: str | None,
+    cwd: Path | None = None,
+    clock: Clock | None = None,
+    write_log: bool = True,
+    actor: str = "",
+    reason: str | None = None,
+    dry_run: bool = False,
+) -> CommandResult:
+    """Additive/reversible, like `task assign` - no `--confirm` required,
+    only `--dry-run`."""
+    if git_version() is None:
+        return _no_git_result("task-request-approval", clock)
+    try:
+        repo_root = resolve_repo_root(repo_arg, cwd)
+    except RepoNotFoundError as exc:
+        return _repo_not_found_result("task-request-approval", exc, clock)
+
+    blocked = _repo_level_block(repo_root, "task-request-approval", clock, write_log)
+    if blocked is not None:
+        return blocked
+
+    checks: list[Check] = [Check("repo-discovery", "Repository discovery", "pass", str(repo_root))]
+    plan = build_task_request_approval_plan(repo_root, task_id, actor, reason)
+
+    if plan.conflicts:
+        for c in plan.conflicts:
+            checks.append(Check(f"preflight-{c.key}", f"Preflight: {c.key}", "blocked", c.message))
+    else:
+        checks.append(Check("preflight", "Preflight", "pass", "no conflicts detected"))
+
+    data: dict = {
+        "dry_run": dry_run,
+        "task_id": task_id,
+        "actor": actor,
+        "reason": reason,
+        "current_approval_state": plan.current_approval_state,
+        "planned_approval_state": plan.planned_approval_state,
+        "conflicts": [{"key": c.key, "message": c.message} for c in plan.conflicts],
+        "would_proceed": not plan.has_conflict,
+    }
+
+    if plan.has_conflict:
+        data["action"] = "blocked"
+        exit_code = exit_codes.BLOCKED
+        summary = f"task request-approval: blocked by {len(plan.conflicts)} conflict(s) (exit {exit_code})"
+        return _finish(repo_root, "task-request-approval", checks, data, exit_code, summary, clock, write_log)
+
+    if dry_run:
+        data["action"] = "would_request_approval"
+        checks.append(Check(
+            "write", "Approval request", "informational",
+            f"dry-run: would transition '{task_id}' approval_state from '{plan.current_approval_state}' to "
+            f"'{plan.planned_approval_state}' - no file was written",
+        ))
+        exit_code = exit_codes.SUCCESS
+        summary = f"task request-approval: dry-run, would request approval for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-request-approval", checks, data, exit_code, summary, clock, write_log)
+
+    outcome = apply_task_request_approval(repo_root, plan, clock)
+    return _handle_approval_outcome(repo_root, "task-request-approval", "Approval request", task_id, checks, data, outcome, clock, write_log)
+
+
+def run_task_approve(
+    task_id: str,
+    repo_arg: str | None,
+    cwd: Path | None = None,
+    clock: Clock | None = None,
+    write_log: bool = True,
+    actor: str = "",
+    reason: str | None = None,
+    dry_run: bool = False,
+    confirm: bool = False,
+) -> CommandResult:
+    """Confirmation-gated, like `task close` - `--dry-run` needs no
+    confirmation and mutates nothing; a real run without `--confirm`
+    only previews (zero mutation)."""
+    if git_version() is None:
+        return _no_git_result("task-approve", clock)
+    try:
+        repo_root = resolve_repo_root(repo_arg, cwd)
+    except RepoNotFoundError as exc:
+        return _repo_not_found_result("task-approve", exc, clock)
+
+    blocked = _repo_level_block(repo_root, "task-approve", clock, write_log)
+    if blocked is not None:
+        return blocked
+
+    checks: list[Check] = [Check("repo-discovery", "Repository discovery", "pass", str(repo_root))]
+    plan = build_task_approve_plan(repo_root, task_id, actor, reason)
+
+    if plan.conflicts:
+        for c in plan.conflicts:
+            checks.append(Check(f"preflight-{c.key}", f"Preflight: {c.key}", "blocked", c.message))
+    else:
+        checks.append(Check("preflight", "Preflight", "pass", "no conflicts detected"))
+
+    data: dict = {
+        "dry_run": dry_run,
+        "confirm": confirm,
+        "task_id": task_id,
+        "actor": actor,
+        "reason": reason,
+        "current_approval_state": plan.current_approval_state,
+        "planned_approval_state": plan.planned_approval_state,
+        "conflicts": [{"key": c.key, "message": c.message} for c in plan.conflicts],
+        "would_proceed": not plan.has_conflict,
+    }
+
+    if plan.has_conflict:
+        data["action"] = "blocked"
+        exit_code = exit_codes.BLOCKED
+        summary = f"task approve: blocked by {len(plan.conflicts)} conflict(s) (exit {exit_code})"
+        return _finish(repo_root, "task-approve", checks, data, exit_code, summary, clock, write_log)
+
+    if dry_run:
+        data["action"] = "would_approve"
+        checks.append(Check(
+            "write", "Approval", "informational",
+            f"dry-run: would transition '{task_id}' approval_state from '{plan.current_approval_state}' to "
+            f"'{plan.planned_approval_state}' - no file was written",
+        ))
+        exit_code = exit_codes.SUCCESS
+        summary = f"task approve: dry-run, would approve {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-approve", checks, data, exit_code, summary, clock, write_log)
+
+    if not confirm:
+        data["action"] = "confirmation_required"
+        checks.append(Check(
+            "confirmation-required", "Confirmation required", "blocked",
+            "approval is a mutating operation - pass --confirm to execute, or --dry-run to preview with zero mutation",
+        ))
+        exit_code = exit_codes.BLOCKED
+        summary = f"task approve: confirmation required for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-approve", checks, data, exit_code, summary, clock, write_log)
+
+    outcome = apply_task_approve(repo_root, plan, clock)
+    return _handle_approval_outcome(repo_root, "task-approve", "Approval", task_id, checks, data, outcome, clock, write_log)
+
+
+def run_task_reject(
+    task_id: str,
+    repo_arg: str | None,
+    cwd: Path | None = None,
+    clock: Clock | None = None,
+    write_log: bool = True,
+    actor: str = "",
+    reason: str | None = None,
+    dry_run: bool = False,
+    confirm: bool = False,
+) -> CommandResult:
+    """Confirmation-gated, like `task approve` - additionally, a reason
+    is required (enforced by the preflight plan, not here) since a
+    rejection with no stated reason is refused rather than silently
+    accepted with an empty one."""
+    if git_version() is None:
+        return _no_git_result("task-reject", clock)
+    try:
+        repo_root = resolve_repo_root(repo_arg, cwd)
+    except RepoNotFoundError as exc:
+        return _repo_not_found_result("task-reject", exc, clock)
+
+    blocked = _repo_level_block(repo_root, "task-reject", clock, write_log)
+    if blocked is not None:
+        return blocked
+
+    checks: list[Check] = [Check("repo-discovery", "Repository discovery", "pass", str(repo_root))]
+    plan = build_task_reject_plan(repo_root, task_id, actor, reason)
+
+    if plan.conflicts:
+        for c in plan.conflicts:
+            checks.append(Check(f"preflight-{c.key}", f"Preflight: {c.key}", "blocked", c.message))
+    else:
+        checks.append(Check("preflight", "Preflight", "pass", "no conflicts detected"))
+
+    data: dict = {
+        "dry_run": dry_run,
+        "confirm": confirm,
+        "task_id": task_id,
+        "actor": actor,
+        "reason": reason,
+        "current_approval_state": plan.current_approval_state,
+        "planned_approval_state": plan.planned_approval_state,
+        "conflicts": [{"key": c.key, "message": c.message} for c in plan.conflicts],
+        "would_proceed": not plan.has_conflict,
+    }
+
+    if plan.has_conflict:
+        data["action"] = "blocked"
+        exit_code = exit_codes.BLOCKED
+        summary = f"task reject: blocked by {len(plan.conflicts)} conflict(s) (exit {exit_code})"
+        return _finish(repo_root, "task-reject", checks, data, exit_code, summary, clock, write_log)
+
+    if dry_run:
+        data["action"] = "would_reject"
+        checks.append(Check(
+            "write", "Rejection", "informational",
+            f"dry-run: would transition '{task_id}' approval_state from '{plan.current_approval_state}' to "
+            f"'{plan.planned_approval_state}' - no file was written",
+        ))
+        exit_code = exit_codes.SUCCESS
+        summary = f"task reject: dry-run, would reject {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-reject", checks, data, exit_code, summary, clock, write_log)
+
+    if not confirm:
+        data["action"] = "confirmation_required"
+        checks.append(Check(
+            "confirmation-required", "Confirmation required", "blocked",
+            "rejection is a mutating operation - pass --confirm to execute, or --dry-run to preview with zero mutation",
+        ))
+        exit_code = exit_codes.BLOCKED
+        summary = f"task reject: confirmation required for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-reject", checks, data, exit_code, summary, clock, write_log)
+
+    outcome = apply_task_reject(repo_root, plan, clock)
+    return _handle_approval_outcome(repo_root, "task-reject", "Rejection", task_id, checks, data, outcome, clock, write_log)
+
+
+def run_task_cancel_approval(
+    task_id: str,
+    repo_arg: str | None,
+    cwd: Path | None = None,
+    clock: Clock | None = None,
+    write_log: bool = True,
+    actor: str = "",
+    reason: str | None = None,
+    dry_run: bool = False,
+    confirm: bool = False,
+) -> CommandResult:
+    """Confirmation-gated, like `task approve`/`task reject`. Only valid
+    from `pending`, back to `not_requested` - never touches task status."""
+    if git_version() is None:
+        return _no_git_result("task-cancel-approval", clock)
+    try:
+        repo_root = resolve_repo_root(repo_arg, cwd)
+    except RepoNotFoundError as exc:
+        return _repo_not_found_result("task-cancel-approval", exc, clock)
+
+    blocked = _repo_level_block(repo_root, "task-cancel-approval", clock, write_log)
+    if blocked is not None:
+        return blocked
+
+    checks: list[Check] = [Check("repo-discovery", "Repository discovery", "pass", str(repo_root))]
+    plan = build_task_cancel_approval_plan(repo_root, task_id, actor, reason)
+
+    if plan.conflicts:
+        for c in plan.conflicts:
+            checks.append(Check(f"preflight-{c.key}", f"Preflight: {c.key}", "blocked", c.message))
+    else:
+        checks.append(Check("preflight", "Preflight", "pass", "no conflicts detected"))
+
+    data: dict = {
+        "dry_run": dry_run,
+        "confirm": confirm,
+        "task_id": task_id,
+        "actor": actor,
+        "reason": reason,
+        "current_approval_state": plan.current_approval_state,
+        "planned_approval_state": plan.planned_approval_state,
+        "conflicts": [{"key": c.key, "message": c.message} for c in plan.conflicts],
+        "would_proceed": not plan.has_conflict,
+    }
+
+    if plan.has_conflict:
+        data["action"] = "blocked"
+        exit_code = exit_codes.BLOCKED
+        summary = f"task cancel-approval: blocked by {len(plan.conflicts)} conflict(s) (exit {exit_code})"
+        return _finish(repo_root, "task-cancel-approval", checks, data, exit_code, summary, clock, write_log)
+
+    if dry_run:
+        data["action"] = "would_cancel_approval"
+        checks.append(Check(
+            "write", "Cancellation", "informational",
+            f"dry-run: would transition '{task_id}' approval_state from '{plan.current_approval_state}' to "
+            f"'{plan.planned_approval_state}' - no file was written",
+        ))
+        exit_code = exit_codes.SUCCESS
+        summary = f"task cancel-approval: dry-run, would cancel approval for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-cancel-approval", checks, data, exit_code, summary, clock, write_log)
+
+    if not confirm:
+        data["action"] = "confirmation_required"
+        checks.append(Check(
+            "confirmation-required", "Confirmation required", "blocked",
+            "cancellation is a mutating operation - pass --confirm to execute, or --dry-run to preview with zero mutation",
+        ))
+        exit_code = exit_codes.BLOCKED
+        summary = f"task cancel-approval: confirmation required for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-cancel-approval", checks, data, exit_code, summary, clock, write_log)
+
+    outcome = apply_task_cancel_approval(repo_root, plan, clock)
+    return _handle_approval_outcome(repo_root, "task-cancel-approval", "Cancellation", task_id, checks, data, outcome, clock, write_log)
+
+
 # --- shared -----------------------------------------------------------------
 
 
@@ -903,6 +1245,14 @@ def render_human(result: CommandResult) -> str:
         return _render_human_assign_agent(result)
     if result.command == "task-unassign-agent":
         return _render_human_unassign_agent(result)
+    if result.command == "task-request-approval":
+        return _render_human_approval_action(result, "forgeops task request-approval")
+    if result.command == "task-approve":
+        return _render_human_approval_action(result, "forgeops task approve")
+    if result.command == "task-reject":
+        return _render_human_approval_action(result, "forgeops task reject")
+    if result.command == "task-cancel-approval":
+        return _render_human_approval_action(result, "forgeops task cancel-approval")
     return _render_human_close(result)
 
 
@@ -953,6 +1303,17 @@ def _render_human_show(result: CommandResult) -> str:
     agent_ownership_state = "assigned" if agent_id else "unassigned"
     lines.append(f"assigned agent: {agent_id}  agent ownership: {agent_ownership_state}")
     lines.append(f"approval_state: {task.get('approval_state')}")
+    history = task.get("approval_history") or []
+    if history:
+        last = history[-1]
+        lines.append(
+            f"last approval action: {last.get('action')}  actor: {last.get('actor')}  "
+            f"at: {last.get('timestamp')}"
+        )
+        if last.get("reason"):
+            lines.append(f"last approval reason: {last.get('reason')}")
+    else:
+        lines.append("last approval action: (none)")
     lines.append(f"validation status: {validation.get('status')}")
     lines.append(f"result present: {d.get('result_present')}")
     if d.get("issues"):
@@ -1053,6 +1414,27 @@ def _render_human_unassign_agent(result: CommandResult) -> str:
     d = result.data
     lines.append("")
     lines.append(f"task: {d.get('task_id')}  current agent: {d.get('current_agent')}")
+    lines.append(f"would proceed: {d.get('would_proceed')}")
+    if d.get("conflicts"):
+        lines.append("conflicts:")
+        for c in d["conflicts"]:
+            lines.append(f"  - {c['key']}: {c['message']}")
+    if d.get("partial_state") is not None:
+        lines.append(f"partial state after failure: {d['partial_state']}")
+        lines.append(f"recovery: {d.get('manual_recovery_recommendation')}")
+    return "\n".join(lines)
+
+
+def _render_human_approval_action(result: CommandResult, title: str) -> str:
+    from forgeops.cli.render import render_checks
+    lines = [title, f"summary: {result.summary}", ""]
+    lines.extend(render_checks(result.checks))
+    d = result.data
+    lines.append("")
+    lines.append(f"task: {d.get('task_id')}  actor: {d.get('actor')}")
+    if d.get("reason"):
+        lines.append(f"reason: {d.get('reason')}")
+    lines.append(f"approval_state: {d.get('current_approval_state')} -> {d.get('planned_approval_state')}")
     lines.append(f"would proceed: {d.get('would_proceed')}")
     if d.get("conflicts"):
         lines.append("conflicts:")

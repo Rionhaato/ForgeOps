@@ -106,7 +106,10 @@ automatically.
 (identical preflight, zero mutation, same exit code a real run would
 give). A created task starts at status `draft`, `approval_state`
 `not_requested`, `worktree_id`/`agent_id` both `null` - this checkpoint
-never assigns either.
+never assigns either. See docs/approvals.md for
+`forgeops task request-approval|approve|reject|cancel-approval`, the
+full `approval_state` state machine, and the append-only
+`approval_history` field.
 
 `TASK.json`'s fields: `schema_version`, `task_id`, `title`, `status`,
 `project_root`, `created_at`, `updated_at`, `created_by` (always
@@ -221,7 +224,11 @@ SPEC.md, VALIDATION.json, RESULT.md). Also extended with ten
 agent-ownership-consistency blockers - see docs/agents.md "Validation
 extensions" for the full list (missing/disabled/mismatched/orphaned
 agent ownership, invalid agent identifiers, index disagreement, and a
-terminal task still carrying an assigned agent).
+terminal task still carrying an assigned agent) - and with twelve
+approval-consistency blockers, see docs/approvals.md "Validation
+extensions" for the full list (unsupported/mismatched approval state,
+malformed or impossible `approval_history` transitions, invalid or
+secret-shaped actor/reason, a terminal task still `pending`).
 
 Never runs project tests, never executes a validation command, never
 mutates a task file, never assigns a worktree/agent, never changes
@@ -450,7 +457,15 @@ checkpoints.
 `task assign-agent`/`task unassign-agent` follow this same table -
 see docs/agents.md "Exit codes" for their own conflict/warning keys
 (agent-specific, e.g. `agent-not-found`, `agent-disabled`,
-`task-has-no-worktree`).
+`task-has-no-worktree`). `task request-approval`/`task approve`/`task
+reject`/`task cancel-approval` follow this table too, with one
+deliberate difference: a successful approval mutation is always
+`SUCCESS`, never `WARNINGS_PRESENT` - an index write failure after
+`TASK.json` already succeeded is rolled back and reported as
+`COMMAND_EXECUTION_FAILURE` instead, never a partial success. See
+docs/approvals.md "Exit codes" for the full conflict-key list
+(`invalid-approval-transition`, `reason-required`, `invalid-actor`,
+`actor-secret-detected`, and others).
 
 ## Secret handling
 
@@ -467,14 +482,19 @@ directly outside the CLI.
 
 No automatic worktree creation (assignment only ever links to an
 *existing* worktree), no agent execution, no session launching, no
-process monitoring, no parallel task routing, no approvals workflow, no
-merge orchestration, no MCP, no notifications, no deployment, no Rocky
-integration, no task editing, no reopening, no arbitrary status
-changes, no task deletion, no `worktree remove`/branch/Git-ownership
-changes of any kind (task ownership is a ForgeOps-level link only,
-never touching Git itself). Persistent agent identity and task-to-agent
-ownership (`forgeops agent register|list|show`, `forgeops task
-assign-agent|unassign-agent`) are implemented as a separate layer - see
-docs/agents.md for that command family's own explicit non-goals (no
-launching Claude Code/Codex, no probing an installed CLI, no
-authentication, no agent disable/enable or deletion yet).
+process monitoring, no parallel task routing, no merge orchestration,
+no MCP, no notifications, no deployment, no Rocky integration, no task
+editing, no reopening, no arbitrary status changes, no task deletion,
+no `worktree remove`/branch/Git-ownership changes of any kind (task
+ownership is a ForgeOps-level link only, never touching Git itself).
+Persistent agent identity and task-to-agent ownership (`forgeops agent
+register|list|show`, `forgeops task assign-agent|unassign-agent`) are
+implemented as a separate layer - see docs/agents.md for that command
+family's own explicit non-goals (no launching Claude Code/Codex, no
+probing an installed CLI, no authentication, no agent disable/enable or
+deletion yet). Persistent human approval state (`forgeops task
+request-approval|approve|reject|cancel-approval`) is implemented as a
+third, independent layer - see docs/approvals.md for its own explicit
+non-goals (no task/agent execution, no authenticated-identity
+inference, no approval queue outside the task's own `TASK.json`, no
+reopening an approved task).

@@ -181,6 +181,61 @@ def test_python_dash_m_forgeops_agent_ownership_real_execution(git_repo):
     assert "claude-primary" in agent_list_after.stdout
 
 
+def test_python_dash_m_forgeops_task_approval_real_execution(git_repo):
+    init_result = _run_module(["init", str(git_repo)], cwd=git_repo)
+    assert init_result.returncode == 0
+
+    create_result = _run_module(["task", "create", "Approvable Task", "--repo", str(git_repo)], cwd=git_repo)
+    assert create_result.returncode == 0
+
+    request_result = _run_module(
+        ["task", "request-approval", "task-0001", "--actor", "joshua", "--repo", str(git_repo)], cwd=git_repo,
+    )
+    assert request_result.returncode == 0
+    assert "forgeops task request-approval" in request_result.stdout
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["approval_state"] == "pending"
+    index_json = json.loads((git_repo / ".agent" / "tasks" / "TASK_INDEX.json").read_text(encoding="utf-8"))
+    assert index_json["records"][0]["approval_state"] == "pending"
+
+    no_confirm = _run_module(["task", "approve", "task-0001", "--actor", "joshua", "--repo", str(git_repo)], cwd=git_repo)
+    assert no_confirm.returncode == 2  # BLOCKED: confirmation required
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["approval_state"] == "pending"
+
+    approve_result = _run_module(
+        ["task", "approve", "task-0001", "--actor", "joshua", "--repo", str(git_repo), "--confirm"], cwd=git_repo,
+    )
+    assert approve_result.returncode == 0
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["approval_state"] == "approved"
+    assert [e["action"] for e in task_json["approval_history"]] == ["requested", "approved"]
+    assert task_json["status"] == "draft"
+    assert task_json["worktree_id"] is None
+    assert task_json["agent_id"] is None
+
+
+def test_python_dash_m_forgeops_task_rejection_real_execution(git_repo):
+    init_result = _run_module(["init", str(git_repo)], cwd=git_repo)
+    assert init_result.returncode == 0
+    _run_module(["task", "create", "Rejectable Task", "--repo", str(git_repo)], cwd=git_repo)
+    _run_module(["task", "request-approval", "task-0001", "--actor", "joshua", "--repo", str(git_repo)], cwd=git_repo)
+
+    no_reason = _run_module(
+        ["task", "reject", "task-0001", "--actor", "joshua", "--repo", str(git_repo), "--confirm"], cwd=git_repo,
+    )
+    assert no_reason.returncode == 2  # BLOCKED: reason required
+
+    reject_result = _run_module(
+        ["task", "reject", "task-0001", "--actor", "joshua", "--reason", "not ready", "--repo", str(git_repo), "--confirm"],
+        cwd=git_repo,
+    )
+    assert reject_result.returncode == 0
+    task_json = json.loads((git_repo / ".agent" / "tasks" / "task-0001" / "TASK.json").read_text(encoding="utf-8"))
+    assert task_json["approval_state"] == "rejected"
+    assert task_json["approval_history"][-1]["reason"] == "not ready"
+
+
 def test_python_dash_m_forgeops_invalid_repo_path_exit_code(tmp_path):
     result = _run_module(["status", "--repo", str(tmp_path / "nope")], cwd=tmp_path)
     assert result.returncode == 4  # REPO_NOT_FOUND

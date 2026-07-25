@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,7 +26,13 @@ from forgeops.state.agent_registry import (
     validate_agent_id,
 )
 from forgeops.state.task_registry import (
+    APPROVAL_ACTION_REJECTED,
+    APPROVAL_STATE_NOT_REQUESTED,
+    APPROVAL_STATE_PENDING,
+    APPROVAL_TRANSITIONS,
     INDEX_RELATIVE_PATH,
+    MAX_APPROVAL_REASON_LENGTH,
+    RECOGNIZED_APPROVAL_ACTIONS,
     RECOGNIZED_APPROVAL_STATES,
     RECOGNIZED_STATUSES,
     RECOGNIZED_VALIDATION_STATUSES,
@@ -37,6 +44,7 @@ from forgeops.state.task_registry import (
     load_task_record,
     load_validation_record,
     task_dir_for,
+    validate_actor,
     validate_task_id,
 )
 from forgeops.state.task_spec import (
@@ -199,8 +207,7 @@ def validate_task(
             issues.append(TaskIssue("project-root-mismatch", f"TASK.json project_root '{task_record.project_root}' does not match this project ({repo_root})", SEVERITY_BLOCKER))
         if task_record.status not in RECOGNIZED_STATUSES:
             issues.append(TaskIssue("invalid-status", f"TASK.json status '{task_record.status}' is not a recognized status", SEVERITY_BLOCKER))
-        if task_record.approval_state not in RECOGNIZED_APPROVAL_STATES:
-            issues.append(TaskIssue("invalid-approval-state", f"TASK.json approval_state '{task_record.approval_state}' is not recognized", SEVERITY_BLOCKER))
+        issues.extend(_check_approval_consistency(task_id, task_record, index_record))
         if task_record.worktree_id is not None and not isinstance(task_record.worktree_id, str):
             issues.append(TaskIssue("invalid-worktree-field", "TASK.json worktree_id must be null or a string", SEVERITY_BLOCKER))
         else:
@@ -442,6 +449,128 @@ def _check_agent_ownership_consistency(
         issues.append(TaskIssue(
             "duplicate-agent-assignment",
             f"agent '{claiming[0].agent_id}' claims task '{task_id}' while the task itself is assigned to a different agent ('{agent_id}')",
+            SEVERITY_BLOCKER,
+        ))
+
+    return issues
+
+
+_APPROVAL_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+def _check_approval_consistency(task_id: str, task_record: TaskRecord, index_record) -> list[TaskIssue]:
+    """Read-only consistency checks for `TASK.json.approval_state` and
+    `approval_history` - see `forgeops/state/task_approval.py` for how
+    `task request-approval`/`approve`/`reject`/`cancel-approval` keep
+    them internally consistent and in sync with `TASK_INDEX.json`'s own
+    summary copy. Never repairs anything it finds inconsistent.
+
+    `approval_state`/history agreement (including "approved without an
+    approved event", "pending without a requested event", duplicate or
+    impossible consecutive transitions, etc.) is checked by replaying
+    `approval_history` through the same `APPROVAL_TRANSITIONS` table
+    `task_approval.py` itself uses, rather than re-deriving each of
+    those cases by hand - one state machine, one source of truth."""
+    issues: list[TaskIssue] = []
+
+    state = task_record.approval_state
+    if state not in RECOGNIZED_APPROVAL_STATES:
+        issues.append(TaskIssue(
+            "invalid-approval-state", f"TASK.json approval_state '{state}' is not recognized", SEVERITY_BLOCKER,
+        ))
+
+    if index_record is not None and index_record.approval_state != state:
+        issues.append(TaskIssue(
+            "task-index-approval-mismatch",
+            f"{INDEX_RELATIVE_PATH} approval_state '{index_record.approval_state}' does not match "
+            f"TASK.json approval_state '{state}' for '{task_id}'",
+            SEVERITY_BLOCKER,
+        ))
+
+    if task_record.status in TERMINAL_STATUSES and state == APPROVAL_STATE_PENDING:
+        issues.append(TaskIssue(
+            "terminal-task-with-pending-approval",
+            f"task status is '{task_record.status}' but approval_state is still 'pending'",
+            SEVERITY_BLOCKER,
+        ))
+
+    replay_state = APPROVAL_STATE_NOT_REQUESTED
+    replay_ok = True
+    for idx, event in enumerate(task_record.approval_history):
+        if event.action not in RECOGNIZED_APPROVAL_ACTIONS:
+            issues.append(TaskIssue(
+                "approval-history-invalid-action",
+                f"approval_history[{idx}] has an unrecognized action '{event.action}'",
+                SEVERITY_BLOCKER,
+            ))
+            replay_ok = False
+
+        actor_error = validate_actor(event.actor)
+        if actor_error is not None:
+            issues.append(TaskIssue(
+                "approval-history-invalid-actor",
+                f"approval_history[{idx}] actor '{event.actor}' is invalid: {actor_error}",
+                SEVERITY_BLOCKER,
+            ))
+        else:
+            findings, _ = scan_text(event.actor, relative_path=f".agent/tasks/{task_id}/__approval_history_actor__")
+            if findings:
+                categories = ", ".join(sorted({f.category for f in findings}))
+                issues.append(TaskIssue(
+                    "approval-history-secret-actor",
+                    f"approval_history[{idx}] actor appears to contain secret-shaped content ({categories})",
+                    SEVERITY_BLOCKER,
+                ))
+
+        if not _APPROVAL_TIMESTAMP_RE.match(event.timestamp or ""):
+            issues.append(TaskIssue(
+                "approval-history-invalid-timestamp",
+                f"approval_history[{idx}] timestamp '{event.timestamp}' is not a recognized RFC3339 UTC timestamp",
+                SEVERITY_BLOCKER,
+            ))
+
+        reason = event.reason or ""
+        if event.action == APPROVAL_ACTION_REJECTED and not reason.strip():
+            issues.append(TaskIssue(
+                "approval-history-missing-required-reason",
+                f"approval_history[{idx}] is a 'rejected' event with no reason recorded",
+                SEVERITY_BLOCKER,
+            ))
+        if len(reason) > MAX_APPROVAL_REASON_LENGTH:
+            issues.append(TaskIssue(
+                "approval-history-oversized-reason",
+                f"approval_history[{idx}] reason exceeds {MAX_APPROVAL_REASON_LENGTH} characters",
+                SEVERITY_BLOCKER,
+            ))
+        elif reason:
+            findings, _ = scan_text(reason, relative_path=f".agent/tasks/{task_id}/__approval_history_reason__")
+            if findings:
+                categories = ", ".join(sorted({f.category for f in findings}))
+                issues.append(TaskIssue(
+                    "approval-history-secret-reason",
+                    f"approval_history[{idx}] reason appears to contain secret-shaped content ({categories})",
+                    SEVERITY_BLOCKER,
+                ))
+
+        if event.action not in RECOGNIZED_APPROVAL_ACTIONS:
+            continue
+        next_state = APPROVAL_TRANSITIONS.get((replay_state, event.action))
+        if next_state is None:
+            issues.append(TaskIssue(
+                "approval-history-impossible-transition",
+                f"approval_history[{idx}] action '{event.action}' is not a valid transition from "
+                f"approval state '{replay_state}' (duplicate or out-of-order event)",
+                SEVERITY_BLOCKER,
+            ))
+            replay_ok = False
+            break
+        replay_state = next_state
+
+    if replay_ok and state in RECOGNIZED_APPROVAL_STATES and replay_state != state:
+        issues.append(TaskIssue(
+            "approval-state-history-mismatch",
+            f"TASK.json approval_state '{state}' does not match the state implied by replaying "
+            f"approval_history ('{replay_state}')",
             SEVERITY_BLOCKER,
         ))
 

@@ -6,6 +6,71 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Task Approval Foundation
+- Implemented persistent, purely declarative human approval state for
+  an *existing* task: `forgeops task request-approval TASK_ID --actor
+  ACTOR` (mutating, no `--confirm` required - only `--dry-run`,
+  mirroring `task assign`/`agent register`'s additive shape), and
+  `forgeops task approve|reject|cancel-approval TASK_ID --actor ACTOR`
+  (mutating, confirmation-gated via `--confirm`, `--dry-run` supported,
+  mirroring `task close`/`task unassign`). `--actor` is required on all
+  four commands and never inferred (no OS username, Git identity, or
+  session token is ever consulted); `--reason` is optional except on
+  `reject`, where an empty reason blocks the mutation outright
+  (`reason-required`). Deliberately does not implement task/agent
+  execution, session launching, automatic worktree creation, merges,
+  pushes, deployment, MCP, notifications, credential access, or
+  authenticated-identity inference - see `docs/approvals.md` "Explicit
+  non-goals".
+- `TASK.json.approval_state` now recognizes four values instead of one:
+  `not_requested`, `pending`, `approved`, `rejected`. The complete,
+  closed transition table
+  (`forgeops/state/task_registry.py:APPROVAL_TRANSITIONS`) is the single
+  source of truth consulted by both the mutation layer and the
+  read-only validator - anything not in the table (approved -> approved,
+  approved -> pending, rejected -> approved without a fresh request,
+  not_requested -> approved, any mutation against a terminal task, ...)
+  is refused with `invalid-approval-transition`.
+- New append-only `TASK.json.approval_history` field: one event per
+  successful action (`action`/`actor`/`timestamp`/`reason`/`reference`),
+  timestamps always server/clock-generated (never user-suppliable),
+  never edited, reordered, or deleted - no command exists to erase it.
+- New module `forgeops/state/task_approval.py`: preflight-plan builders
+  and apply steps for all four commands, reusing
+  `task_ownership.py`'s private `_lookup_task`/`_rollback_task_record`
+  helpers directly (the same cross-module private-helper reuse pattern
+  `forgeops/cli/agent.py` already established) rather than duplicating
+  task-lookup/rollback logic a third time.
+- Unlike `task assign`/`task assign-agent` (where `TASK_INDEX.json` is
+  bookkeeping-only and its own write failure is `WARNINGS_PRESENT`), an
+  approval mutation treats `TASK.json` and `TASK_INDEX.json` as one
+  atomic pair: an index write failure after `TASK.json` already
+  succeeded rolls `TASK.json` back and reports
+  `COMMAND_EXECUTION_FAILURE` with `data.partial_state` - a successful
+  approval mutation is therefore always `SUCCESS`, never
+  `WARNINGS_PRESENT`.
+- Extended `forgeops task validate` with twelve read-only
+  approval-consistency checks: `invalid-approval-state`,
+  `task-index-approval-mismatch`, `terminal-task-with-pending-approval`,
+  `approval-history-invalid-action`, `approval-history-invalid-actor`,
+  `approval-history-secret-actor`, `approval-history-invalid-timestamp`,
+  `approval-history-missing-required-reason`,
+  `approval-history-oversized-reason`, `approval-history-secret-reason`,
+  `approval-history-impossible-transition`, and
+  `approval-state-history-mismatch` - the last two implemented by
+  replaying `approval_history` through `APPROVAL_TRANSITIONS` rather
+  than hand-coding each state/history disagreement separately.
+- `task show` human output gained current `approval_state` plus the
+  most recent approval action/actor/timestamp/reason (when present);
+  `task list` rows already reserved `approval_state` and now show real
+  values. JSON output already exposed `TASK.json` directly, so
+  structured `approval_state`/`approval_history` required no separate
+  endpoint.
+- Never changes `TASK.json.status`, `worktree_id`, `agent_id`,
+  `validation_state`, `result_state`, `SPEC.md`, `VALIDATION.json`, or
+  `RESULT.md` - approval is entirely independent of every other task
+  field.
+
 ### Agent Ownership Foundation
 - Implemented persistent, declarative agent identity: `forgeops agent
   register AGENT_ID --kind KIND` (mutating, no `--confirm` required -

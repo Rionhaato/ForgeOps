@@ -704,3 +704,59 @@ explicit that "lack of a worktree is a warning, not a blocker."
 
 See `docs/agents.md` for the full command/exit-code/lifecycle contract
 this codifies.
+
+## 2026-07-23 — Task Approval Foundation: `TASK.json`+`TASK_INDEX.json` treated as an atomic pair (not bookkeeping-plus-authority), state machine centralized in one transition table, actor never inferred
+
+Four deliberate choices building `forgeops task
+request-approval|approve|reject|cancel-approval`:
+
+1. **Approval mutations treat `TASK_INDEX.json` as equally
+   authoritative to `TASK.json`, breaking with every prior
+   task-mutating command's convention.** `task create`/`task close`/
+   `task assign`/`task unassign`/`task assign-agent`/`task
+   unassign-agent` all treat `TASK_INDEX.json` as pure bookkeeping - a
+   failure updating it after the authoritative write(s) already
+   succeeded is `WARNINGS_PRESENT`, never a failure. Approval is
+   different by explicit instruction: a `TASK_INDEX.json` write failure
+   after `TASK.json` already succeeded rolls `TASK.json` back and
+   reports `COMMAND_EXECUTION_FAILURE` - a successful approval mutation
+   is therefore always `SUCCESS`, never `WARNINGS_PRESENT`. This is a
+   real inconsistency with the rest of the codebase's index-handling
+   convention, but a deliberate one: approval state has no second
+   "real" authoritative file the way worktree/agent ownership do
+   (`WORKTREE_REGISTRY.json`/`AGENT_REGISTRY.json`), so treating
+   `TASK_INDEX.json` with the same care as those files' atomic pairs
+   was the closest available equivalent to "approval state must never
+   appear authoritative in one place and stale in another, even
+   transiently."
+2. **The entire state machine lives in one dict,
+   `forgeops/state/task_registry.py:APPROVAL_TRANSITIONS`** (mapping
+   `(current_state, action) -> next_state`), consulted directly by both
+   the mutation layer (`task_approval.py`) and the read-only validator
+   (`task_validate.py`, by replaying `approval_history` through the same
+   table from `not_requested`). This single-source-of-truth design
+   collapses what would otherwise be a dozen hand-coded special cases
+   ("approved without an approved event," "pending without a requested
+   event," duplicate/impossible consecutive transitions, ...) into one
+   replay loop plus one mismatch check - a lookup miss during replay
+   *is* the "impossible transition" finding, and a state that doesn't
+   match the replay result *is* every "missing required event" finding
+   at once.
+3. **`task_approval.py` reuses `task_ownership.py`'s private
+   `_lookup_task`/`_rollback_task_record` helpers directly** rather than
+   a third copy of task-identity/schema/terminal-status lookup and
+   rollback logic - the same cross-module private-helper reuse pattern
+   `forgeops/cli/agent.py` established for `_repo_level_block`, now
+   applied a second time and explicitly noted here as a reusable
+   precedent rather than a one-off exception.
+4. **Actor is always explicit, never inferred**, per the checkpoint's
+   own explicit instruction - no OS username, Git identity, or session
+   token is ever consulted. `validate_actor` deliberately allows a
+   broader character set than `validate_agent_id`/`validate_task_id`
+   (letters, digits, spaces, `.`, `@`, `-`, `_`) since an actor is a
+   human-readable name/identifier, not a filesystem path segment or
+   registry key - but still rejects outright (never sanitizes) on any
+   violation, keeping the same allow-list philosophy.
+
+See `docs/approvals.md` for the full command/exit-code/state-machine
+contract this codifies.

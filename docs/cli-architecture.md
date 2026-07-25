@@ -21,7 +21,7 @@ forgeops/
     resume_context.py           forgeops resume-context (read-only, bounded-size compact resume summary)
     init.py                      forgeops init [PATH] (safe, deterministic project bootstrap - see docs/project-init.md)
     worktree.py                   forgeops worktree list | create | remove (safe Git worktree inspection/creation/removal - see docs/worktrees.md)
-    task.py                       forgeops task create | show | list | validate | close | assign | unassign | assign-agent | unassign-agent (persistent Task Specification Engine + worktree/agent ownership - see docs/tasks.md, docs/agents.md)
+    task.py                       forgeops task create | show | list | validate | close | assign | unassign | assign-agent | unassign-agent | request-approval | approve | reject | cancel-approval (persistent Task Specification Engine + worktree/agent ownership + human approval - see docs/tasks.md, docs/agents.md, docs/approvals.md)
     agent.py                      forgeops agent register | list | show (persistent, declarative agent identity - see docs/agents.md)
   core/
     paths.py             repo-root discovery, path normalization, read-only reference repository protection
@@ -60,6 +60,7 @@ forgeops/
     task_ownership.py                   pure preflight-plan builders and mutating apply steps for `forgeops task assign`/`unassign` and `forgeops task assign-agent`/`unassign-agent` (see docs/tasks.md "Ownership", docs/agents.md "Ownership")
     agent_registry.py                    AGENT_REGISTRY.json schema, constants, atomic load/save (see docs/agents.md)
     agent_register.py                     pure preflight-plan builder and single mutating writer for `forgeops agent register`
+    task_approval.py                       pure preflight-plan builders and mutating apply steps for `forgeops task request-approval|approve|reject|cancel-approval` (see docs/approvals.md)
   worktrees/
     naming.py                NAME validation, deterministic branch-name/managed-root/path derivation
     git_worktree.py            git worktree list/add plumbing - tolerant porcelain parsing, no shell interpolation
@@ -106,38 +107,46 @@ dispatches on `result.command` (`"worktree-list"` / `"worktree-create"`
 branch-naming rule, conflict model, registry, and removal
 eligibility/confirmation model this implements. `task.py` (the fourth
 mutating exception - `task create`/`task close`/`task assign`/`task
-unassign`/`task assign-agent`/`task unassign-agent` mutate, `task
-show`/`task list`/`task validate` don't - and the first
-nine-subcommand module) exposes `run_task_create`, `run_task_show`,
+unassign`/`task assign-agent`/`task unassign-agent`/`task
+request-approval`/`task approve`/`task reject`/`task cancel-approval`
+mutate, `task show`/`task list`/`task validate` don't - and the first
+thirteen-subcommand module) exposes `run_task_create`, `run_task_show`,
 `run_task_list`, `run_task_validate`, `run_task_close`,
-`run_task_assign`/`run_task_assign_agent` (both accepting `dry_run:
-bool = False` only - no `--confirm`, mirroring `task create`/`worktree
-create`'s own additive, easily-reversed shape rather than a destructive
-one), and `run_task_unassign`/`run_task_unassign_agent` (both accepting
+`run_task_assign`/`run_task_assign_agent`/`run_task_request_approval`
+(all three accepting `dry_run: bool = False` only - no `--confirm`,
+mirroring `task create`/`worktree create`'s own additive,
+easily-reversed shape rather than a destructive one), and
+`run_task_unassign`/`run_task_unassign_agent`/`run_task_approve`/
+`run_task_reject`/`run_task_cancel_approval` (all five accepting
 `dry_run: bool = False`, `confirm: bool = False`, mirroring `task
 close`/`worktree remove` instead), sharing one `render_human`
 dispatching on `result.command` (`"task-create"` / `"task-show"` /
 `"task-list"` / `"task-validate"` / `"task-close"` / `"task-assign"` /
-`"task-unassign"` / `"task-assign-agent"` / `"task-unassign-agent"`).
-All nine share a single repo-level gate (`_repo_level_block`) that
-every other worktree/init command doesn't need: a protected-reference-repo
-check identical to the others, plus a new one - the target must already
-be an initialized ForgeOps project (`.agent/CURRENT_STATE.json` present
-and schema-valid) - since the Task Specification Engine has nowhere
-safe to persist state otherwise. `agent.py` (the fifth mutating
-exception - only `agent register` mutates, and only without a
-`--confirm` gate, mirroring `task assign`'s own shape) exposes
-`run_agent_register`, `run_agent_list`, `run_agent_show`, sharing one
-`render_human` dispatching on `result.command` (`"agent-register"` /
-`"agent-list"` / `"agent-show"`) and **importing** `task.py`'s own
-`_repo_level_block` directly rather than a second copy of the same two
-checks - the only cross-module reuse of a nominally private helper in
-this codebase, done deliberately to avoid duplicating logic for a
-single shared precondition. See `docs/tasks.md` for the task directory
-contract, ID generation, lifecycle, validation-artifact model, closure's
-confirmation/atomicity model, and the worktree-ownership layer's
-one-to-one model; see `docs/agents.md` for the agent identity registry
-and the agent-ownership layer built on the same pattern. `run_*` never touches `sys.argv`,
+`"task-unassign"` / `"task-assign-agent"` / `"task-unassign-agent"` /
+`"task-request-approval"` / `"task-approve"` / `"task-reject"` /
+`"task-cancel-approval"`). All thirteen share a single repo-level gate
+(`_repo_level_block`) that every other worktree/init command doesn't
+need: a protected-reference-repo check identical to the others, plus a
+new one - the target must already be an initialized ForgeOps project
+(`.agent/CURRENT_STATE.json` present and schema-valid) - since the Task
+Specification Engine has nowhere safe to persist state otherwise.
+`agent.py` (the fifth mutating exception - only `agent register`
+mutates, and only without a `--confirm` gate, mirroring `task assign`'s
+own shape) exposes `run_agent_register`, `run_agent_list`,
+`run_agent_show`, sharing one `render_human` dispatching on
+`result.command` (`"agent-register"` / `"agent-list"` /
+`"agent-show"`) and **importing** `task.py`'s own `_repo_level_block`
+directly rather than a second copy of the same two checks - the same
+cross-module reuse pattern `forgeops/state/task_approval.py` also
+applies to `task_ownership.py`'s private `_lookup_task`/
+`_rollback_task_record` helpers, done deliberately to avoid duplicating
+logic for a single shared precondition/helper. See `docs/tasks.md` for
+the task directory contract, ID generation, lifecycle,
+validation-artifact model, closure's confirmation/atomicity model, and
+the worktree-ownership layer's one-to-one model; see `docs/agents.md`
+for the agent identity registry and the agent-ownership layer built on
+the same pattern; see `docs/approvals.md` for the approval state
+machine and its atomic-pair persistence model. `run_*` never touches `sys.argv`,
 `print`, or `sys.exit` — it's a pure function over its arguments, which is
 what makes it directly unit-testable (see `tests/integration/test_cli_*.py`)
 without spawning a subprocess. `main()` in `forgeops/cli/__init__.py` is
@@ -278,16 +287,23 @@ Only a genuinely unexpected exception (a real bug) is caught here:
   way. `checkpoint`, `handoff`, `process-list`, `cleanup`, `init`,
   `worktree list`/`worktree create`/`worktree remove`, `task
   create`/`task show`/`task list`/`task validate`/`task close`/`task
-  assign`/`task unassign`/`task assign-agent`/`task unassign-agent`,
-  and `agent register`/`agent list`/`agent show` are now implemented
-  (see `docs/checkpoint-and-handoff.md`, `docs/process-list-and-cleanup.md`,
-  `docs/project-init.md`, `docs/worktrees.md`, `docs/tasks.md`,
-  `docs/agents.md`). `worktree prune`, bulk/forced removal, merge
-  orchestration, agent execution/session-launching, parallel task
-  routing, automatic worktree creation, agent disable/enable/deletion,
-  and an approvals workflow all remain unimplemented - see
-  `docs/worktrees.md`, `docs/tasks.md`, and `docs/agents.md` "Explicit
-  non-goals". See `docs/phase2c-validation.md` for prior
+  assign`/`task unassign`/`task assign-agent`/`task unassign-agent`/
+  `task request-approval`/`task approve`/`task reject`/`task
+  cancel-approval`, and `agent register`/`agent list`/`agent show` are
+  now implemented (see `docs/checkpoint-and-handoff.md`,
+  `docs/process-list-and-cleanup.md`, `docs/project-init.md`,
+  `docs/worktrees.md`, `docs/tasks.md`, `docs/agents.md`,
+  `docs/approvals.md`). The still-registered-but-unimplemented plural
+  `forgeops approvals` command is a distinct, hypothetical future
+  top-level namespace, not to be confused with the now-implemented
+  `task request-approval`/`approve`/`reject`/`cancel-approval` family.
+  `worktree prune`, bulk/forced removal, merge orchestration, agent
+  execution/session-launching, parallel task routing, automatic
+  worktree creation, agent disable/enable/deletion, task/agent
+  execution triggered by an approval, and authenticated-identity
+  inference for approval actors all remain unimplemented - see
+  `docs/worktrees.md`, `docs/tasks.md`, `docs/agents.md`, and
+  `docs/approvals.md` "Explicit non-goals". See `docs/phase2c-validation.md` for prior
   recommended-next-scope notes.
 - Process discovery (`forgeops/detectors/processes.py`) is Windows-only
   today - `forgeops process-list`/`forgeops cleanup` report a clear

@@ -189,6 +189,28 @@ Per-command specifics:
   `agent list` found a malformed registry; otherwise `SUCCESS` (0),
   including a conflict-free `--dry-run`. See `docs/agents.md`.
 
+- **`task request-approval`/`task approve`/`task reject`/`task
+  cancel-approval`**: `REPO_NOT_FOUND` (4) / `COMMAND_EXECUTION_FAILURE`
+  (5, git unavailable) as above; `BLOCKED` (2) for the read-only
+  reference repository, an uninitialized project (the same shared gate
+  every other `task` command uses), any preflight conflict (task not
+  found/malformed, an already-terminal task, an unrecognized current
+  `approval_state`, a requested transition `APPROVAL_TRANSITIONS`
+  does not permit, an invalid/secret-shaped actor, an oversized/
+  secret-shaped reason, `reject`'s reason missing entirely, or
+  `TASK_INDEX.json`'s `approval_state` already disagreeing with
+  `TASK.json`'s), or `--confirm` missing on a non-dry-run `task
+  approve`/`task reject`/`task cancel-approval` (`task
+  request-approval` itself needs no `--confirm`, only `--dry-run`);
+  `COMMAND_EXECUTION_FAILURE` (5) also if an approval write genuinely
+  fails partway through, **including** a `TASK_INDEX.json` update
+  failure after `TASK.json` already succeeded (rolled back and reported
+  as a failure here, deliberately never `WARNINGS_PRESENT` - unlike
+  every other task-mutating command, approval treats the two files as
+  one atomic pair, not an authoritative-record-plus-bookkeeping-summary
+  pair); otherwise `SUCCESS` (0), including a conflict-free `--dry-run`.
+  See `docs/approvals.md`.
+
 ## Stability guarantee
 
 These seven codes and their meanings are the stable contract established

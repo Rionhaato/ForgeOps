@@ -998,6 +998,200 @@ def test_task_unassign_agent_confirm_and_dry_run_flags_reach_run_task_unassign_a
     assert captured_kwargs["dry_run"] is False
 
 
+def test_task_request_approval_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task request-approval")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_request_approval", boom)
+    exit_code = main(["task", "request-approval", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo)])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "Traceback (most recent call last)" not in captured.err
+    assert "simulated internal bug in task request-approval" in captured.err
+
+
+def test_task_request_approval_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task request-approval")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_request_approval", boom)
+    exit_code = main(["task", "request-approval", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo), "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+    assert payload["error"] == "RuntimeError"
+
+
+def test_task_request_approval_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task request-approval")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_request_approval", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task request-approval"):
+        main(["--debug", "task", "request-approval", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo)])
+
+
+def test_task_request_approval_flags_reach_run_task_request_approval(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run(task_id, repo_arg, actor="", reason=None, dry_run=False):
+        captured_kwargs["actor"] = actor
+        captured_kwargs["reason"] = reason
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.task import run_task_request_approval as real
+        return real(task_id, repo_arg, write_log=False, actor=actor, reason=reason, dry_run=dry_run)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_request_approval", fake_run)
+    main(["task", "request-approval", "task-0001", "--actor", "joshua", "--reason", "please review", "--repo", str(initialized_repo), "--dry-run"])
+    assert captured_kwargs["actor"] == "joshua"
+    assert captured_kwargs["reason"] == "please review"
+    assert captured_kwargs["dry_run"] is True
+
+
+def test_task_approve_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task approve")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_approve", boom)
+    exit_code = main(["task", "approve", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo), "--confirm"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "simulated internal bug in task approve" in captured.err
+
+
+def test_task_approve_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task approve")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_approve", boom)
+    exit_code = main(["task", "approve", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo), "--confirm", "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+
+
+def test_task_approve_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task approve")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_approve", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task approve"):
+        main(["--debug", "task", "approve", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo), "--confirm"])
+
+
+def test_task_approve_confirm_and_dry_run_flags_reach_run_task_approve(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run(task_id, repo_arg, actor="", reason=None, dry_run=False, confirm=False):
+        captured_kwargs["confirm"] = confirm
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.task import run_task_approve as real
+        return real(task_id, repo_arg, write_log=False, actor=actor, reason=reason, dry_run=dry_run, confirm=confirm)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_approve", fake_run)
+    main(["task", "approve", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo), "--confirm"])
+    assert captured_kwargs["confirm"] is True
+    assert captured_kwargs["dry_run"] is False
+
+
+def test_task_reject_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task reject")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_reject", boom)
+    exit_code = main(["task", "reject", "task-0001", "--actor", "joshua", "--reason", "no", "--repo", str(initialized_repo), "--confirm"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "simulated internal bug in task reject" in captured.err
+
+
+def test_task_reject_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task reject")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_reject", boom)
+    exit_code = main(["task", "reject", "task-0001", "--actor", "joshua", "--reason", "no", "--repo", str(initialized_repo), "--confirm", "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+
+
+def test_task_reject_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task reject")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_reject", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task reject"):
+        main(["--debug", "task", "reject", "task-0001", "--actor", "joshua", "--reason", "no", "--repo", str(initialized_repo), "--confirm"])
+
+
+def test_task_reject_confirm_and_dry_run_flags_reach_run_task_reject(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run(task_id, repo_arg, actor="", reason=None, dry_run=False, confirm=False):
+        captured_kwargs["confirm"] = confirm
+        captured_kwargs["dry_run"] = dry_run
+        captured_kwargs["reason"] = reason
+        from forgeops.cli.task import run_task_reject as real
+        return real(task_id, repo_arg, write_log=False, actor=actor, reason=reason, dry_run=dry_run, confirm=confirm)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_reject", fake_run)
+    main(["task", "reject", "task-0001", "--actor", "joshua", "--reason", "no", "--repo", str(initialized_repo), "--confirm"])
+    assert captured_kwargs["confirm"] is True
+    assert captured_kwargs["dry_run"] is False
+    assert captured_kwargs["reason"] == "no"
+
+
+def test_task_cancel_approval_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task cancel-approval")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_cancel_approval", boom)
+    exit_code = main(["task", "cancel-approval", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo), "--confirm"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    assert "simulated internal bug in task cancel-approval" in captured.err
+
+
+def test_task_cancel_approval_unexpected_exception_json_mode(initialized_repo, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task cancel-approval")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_cancel_approval", boom)
+    exit_code = main(["task", "cancel-approval", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo), "--confirm", "--json"])
+    captured = capsys.readouterr()
+    assert exit_code == exit_codes.INTERNAL_ERROR
+    payload = json.loads(captured.out)
+    assert payload["exit_code"] == exit_codes.INTERNAL_ERROR
+
+
+def test_task_cancel_approval_debug_flag_lets_exception_propagate(initialized_repo, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated internal bug in task cancel-approval")
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_cancel_approval", boom)
+    with pytest.raises(RuntimeError, match="simulated internal bug in task cancel-approval"):
+        main(["--debug", "task", "cancel-approval", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo), "--confirm"])
+
+
+def test_task_cancel_approval_confirm_and_dry_run_flags_reach_run_task_cancel_approval(initialized_repo, monkeypatch):
+    captured_kwargs = {}
+
+    def fake_run(task_id, repo_arg, actor="", reason=None, dry_run=False, confirm=False):
+        captured_kwargs["confirm"] = confirm
+        captured_kwargs["dry_run"] = dry_run
+        from forgeops.cli.task import run_task_cancel_approval as real
+        return real(task_id, repo_arg, write_log=False, actor=actor, reason=reason, dry_run=dry_run, confirm=confirm)
+
+    monkeypatch.setattr("forgeops.cli.task_cmd.run_task_cancel_approval", fake_run)
+    main(["task", "cancel-approval", "task-0001", "--actor", "joshua", "--repo", str(initialized_repo), "--confirm"])
+    assert captured_kwargs["confirm"] is True
+    assert captured_kwargs["dry_run"] is False
+
+
 def test_agent_register_unexpected_exception_returns_internal_error(initialized_repo, monkeypatch, capsys):
     def boom(*args, **kwargs):
         raise RuntimeError("simulated internal bug in agent register")

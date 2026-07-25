@@ -541,3 +541,183 @@ def test_agent_ownership_validate_never_mutates(initialized_repo):
     validate_task(initialized_repo, task_id, True, _resolve_ok)
     after = set(initialized_repo.rglob("*"))
     assert before == after
+
+
+# --- approval consistency -------------------------------------------------------
+
+
+def _request_approval(repo_root, task_id, actor="joshua"):
+    from forgeops.state.task_approval import apply_task_request_approval, build_task_request_approval_plan
+    outcome = apply_task_request_approval(repo_root, build_task_request_approval_plan(repo_root, task_id, actor))
+    assert outcome.ok is True
+
+
+def _approve(repo_root, task_id, actor="joshua"):
+    from forgeops.state.task_approval import apply_task_approve, build_task_approve_plan
+    outcome = apply_task_approve(repo_root, build_task_approve_plan(repo_root, task_id, actor))
+    assert outcome.ok is True
+
+
+def _reject(repo_root, task_id, actor="joshua", reason="no"):
+    from forgeops.state.task_approval import apply_task_reject, build_task_reject_plan
+    outcome = apply_task_reject(repo_root, build_task_reject_plan(repo_root, task_id, actor, reason))
+    assert outcome.ok is True
+
+
+def test_fresh_task_has_no_approval_issues(initialized_repo):
+    task_id = _create(initialized_repo)
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    approval_keys = {i.key for i in outcome.issues if i.key.startswith("approval") or "approval" in i.key}
+    assert approval_keys == set()
+
+
+def test_valid_approval_lifecycle_has_no_approval_issues(initialized_repo):
+    task_id = _create(initialized_repo)
+    _request_approval(initialized_repo, task_id)
+    _approve(initialized_repo, task_id)
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    approval_keys = {i.key for i in outcome.issues if "approval" in i.key}
+    assert approval_keys == set()
+
+
+def test_task_index_approval_mismatch_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    _request_approval(initialized_repo, task_id)
+    index_path = initialized_repo / ".agent" / "tasks" / "TASK_INDEX.json"
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    payload["records"][0]["approval_state"] = "not_requested"
+    index_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "task-index-approval-mismatch" for i in outcome.blockers)
+
+
+def test_malformed_approval_history_shape_reported_as_task_json_malformed(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    task_json_path = task_dir / "TASK.json"
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
+    payload["approval_history"] = [{"actor": "joshua"}]  # missing required "action"
+    task_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "task-json-malformed" for i in outcome.blockers)
+
+
+def test_approval_history_invalid_action_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    _request_approval(initialized_repo, task_id)
+    task_json_path = task_dir / "TASK.json"
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
+    payload["approval_history"][0]["action"] = "bogus"
+    task_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "approval-history-invalid-action" for i in outcome.blockers)
+
+
+def test_approval_history_invalid_actor_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    _request_approval(initialized_repo, task_id)
+    task_json_path = task_dir / "TASK.json"
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
+    payload["approval_history"][0]["actor"] = ""
+    task_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "approval-history-invalid-actor" for i in outcome.blockers)
+
+
+def test_approval_history_secret_like_reason_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    _request_approval(initialized_repo, task_id)
+    task_json_path = task_dir / "TASK.json"
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
+    payload["approval_history"][0]["reason"] = "key is AKIAABCDEFGHIJKLMNOP"
+    task_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "approval-history-secret-reason" for i in outcome.blockers)
+
+
+def test_approval_history_invalid_timestamp_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    _request_approval(initialized_repo, task_id)
+    task_json_path = task_dir / "TASK.json"
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
+    payload["approval_history"][0]["timestamp"] = "not-a-timestamp"
+    task_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "approval-history-invalid-timestamp" for i in outcome.blockers)
+
+
+def test_approval_history_missing_required_reason_for_rejection_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    _request_approval(initialized_repo, task_id)
+    _reject(initialized_repo, task_id)
+    task_json_path = task_dir / "TASK.json"
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
+    payload["approval_history"][-1]["reason"] = ""
+    task_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "approval-history-missing-required-reason" for i in outcome.blockers)
+
+
+def test_approval_history_oversized_reason_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    _request_approval(initialized_repo, task_id)
+    task_json_path = task_dir / "TASK.json"
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
+    payload["approval_history"][0]["reason"] = "x" * 3000
+    task_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "approval-history-oversized-reason" for i in outcome.blockers)
+
+
+def test_approval_state_history_mismatch_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    _request_approval(initialized_repo, task_id)
+    _approve(initialized_repo, task_id)
+    task_json_path = task_dir / "TASK.json"
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
+    payload["approval_state"] = "pending"  # history replay says 'approved'
+    task_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "approval-state-history-mismatch" for i in outcome.blockers)
+
+
+def test_approval_history_impossible_transition_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    _request_approval(initialized_repo, task_id)
+    _approve(initialized_repo, task_id)
+    task_json_path = task_dir / "TASK.json"
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
+    # Duplicate the 'approved' event - approved -> approved is not a valid transition.
+    payload["approval_history"].append(dict(payload["approval_history"][-1]))
+    task_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "approval-history-impossible-transition" for i in outcome.blockers)
+
+
+def test_terminal_task_with_pending_approval_is_a_blocker(initialized_repo):
+    task_id = _create(initialized_repo)
+    task_dir = task_dir_for(initialized_repo, task_id)
+    _request_approval(initialized_repo, task_id)
+    record = load_task_record(task_dir).record
+    tampered = type(record)(**{**record.__dict__, "status": "completed"})
+    save_task_record(task_dir, tampered)
+    outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
+    assert any(i.key == "terminal-task-with-pending-approval" for i in outcome.blockers)
+
+
+def test_approval_validate_never_mutates(initialized_repo):
+    task_id = _create(initialized_repo)
+    _request_approval(initialized_repo, task_id)
+    _approve(initialized_repo, task_id)
+    before = set(initialized_repo.rglob("*"))
+    validate_task(initialized_repo, task_id, True, _resolve_ok)
+    after = set(initialized_repo.rglob("*"))
+    assert before == after

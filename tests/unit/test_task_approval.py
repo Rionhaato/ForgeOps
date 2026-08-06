@@ -97,7 +97,7 @@ def test_request_approval_invalid_actor_too_long(initialized_repo):
 
 def test_request_approval_secret_like_actor_refused(initialized_repo):
     task_id = _create_task(initialized_repo)
-    plan = build_task_request_approval_plan(initialized_repo, task_id, "AKIAABCDEFGHIJKLMNOP")
+    plan = build_task_request_approval_plan(initialized_repo, task_id, "AKIAABCDEFGHIJKLMNOP")  # forgeops:allow-secret
     assert any(c.key == "actor-secret-detected" for c in plan.conflicts)
 
 
@@ -109,7 +109,27 @@ def test_request_approval_oversized_reason_refused(initialized_repo):
 
 def test_request_approval_secret_like_reason_refused(initialized_repo):
     task_id = _create_task(initialized_repo)
-    plan = build_task_request_approval_plan(initialized_repo, task_id, "joshua", "key is AKIAABCDEFGHIJKLMNOP")
+    plan = build_task_request_approval_plan(initialized_repo, task_id, "joshua", "key is AKIAABCDEFGHIJKLMNOP")  # forgeops:allow-secret
+    assert any(c.key == "reason-secret-detected" for c in plan.conflicts)
+
+
+def test_request_approval_actor_carrying_an_allow_secret_marker_is_still_refused(initialized_repo):
+    """The inline allowlist marker annotates *source fixtures* for the
+    repository scanner; it is not a runtime escape hatch. An actor that
+    embeds the marker is refused before the scanner is even consulted -
+    `validate_actor`'s character allow-list is stricter than the scanner
+    and rejects the marker's `:`/`#`/whitespace outright."""
+    task_id = _create_task(initialized_repo)
+    smuggled = "AKIA" + "ABCDEFGHIJKLMNOP" + "  # forgeops:allow-secret"
+    plan = build_task_request_approval_plan(initialized_repo, task_id, smuggled)
+    assert plan.has_conflict
+    assert any(c.key == "invalid-actor" for c in plan.conflicts)
+
+
+def test_request_approval_reason_carrying_an_allow_secret_marker_is_still_refused(initialized_repo):
+    task_id = _create_task(initialized_repo)
+    smuggled = "key is AKIA" + "ABCDEFGHIJKLMNOP" + " # forgeops:allow-secret"
+    plan = build_task_request_approval_plan(initialized_repo, task_id, "joshua", smuggled)
     assert any(c.key == "reason-secret-detected" for c in plan.conflicts)
 
 

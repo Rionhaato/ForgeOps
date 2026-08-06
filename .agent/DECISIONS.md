@@ -814,3 +814,52 @@ for the whole build, advertising features that lived at different paths.
 
 This checkpoint introduces **no** new agent execution, authorization,
 hook, tool, or MCP behavior — it is a structural correction only.
+
+## 2026-07-25 — Synthetic secret fixtures annotated in place rather than defanged, closing the audit-drift window
+
+`forgeops audit` had been exiting 2 with 20 blocked findings, and
+`forgeops release-check` reporting NOT RELEASE READY, since commit
+`2955b25` (2026-07-22). Every one of the 20 was a deliberately
+secret-shaped string fed to ForgeOps by its own test suite to prove that
+ForgeOps *refuses* or *redacts* it. An independent review classified all
+20 as synthetic: no real credential, nothing to rotate, no history
+rewrite warranted.
+
+**Decision: annotate each fixture line with the existing
+`forgeops:allow-secret` marker. Do not change the fixture values, do not
+weaken the patterns, do not exempt paths.**
+
+1. **The value has to stay secret-shaped.** The alternative — rewriting
+   fixtures so they no longer match the detectors — would have silenced
+   the audit by deleting the very inputs that prove detection,
+   rejection, and redaction work. A test that no longer trips the
+   scanner cannot prove the scanner trips.
+2. **The narrowest available mechanism.** The marker is granted per
+   *physical line*, and only when the file's path already sits in an
+   approved fixture zone. No file-wide header marker, no directory
+   exemption, no `allow_secret_paths` config entry, no change to
+   `PATTERNS`, and no change to the `BLOCKED` exit-code semantics. 20
+   lines annotated, 20 exemptions granted, nothing else moved.
+3. **Exemptions stay visible, never silent.** `scan_text` returns
+   findings and exemptions as separate lists precisely so a granted
+   exemption cannot be mistaken for "nothing happened". The audit's
+   informational count rose from 38 to 58 — each of the 20 exemptions is
+   reported by file and line — and the secret-scan check moved from
+   blocked to pass (11 → 12 passing checks).
+4. **The marker is a source-scanning concept, not a runtime bypass.**
+   Every runtime caller in `forgeops/state/*` scans user-supplied
+   actors, reasons, spec files and result files under a synthetic
+   `.agent/...` path that matches no approved zone, so a user who embeds
+   the marker in their own input is still refused. Those paths are built
+   from hard-coded labels, never from user input. This is now covered by
+   regression tests rather than left as an implementation detail.
+5. **Historical validation records are clarified, not rewritten.**
+   `docs/phase2b-validation.md` and `docs/phase2c-validation.md` recorded
+   genuinely clean audits for their phases; those results were true when
+   measured. Each now carries a dated note explaining that later fixtures
+   introduced drift and that this checkpoint restored hygiene. A stale
+   result is superseded by addition, never by editing the historical
+   fact.
+
+No real credential was found at any point; no rotation or history
+rewrite was required.

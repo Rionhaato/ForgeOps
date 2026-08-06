@@ -6,6 +6,37 @@ this project doesn't have a public release cadence yet.
 
 ## Unreleased
 
+### Synthetic Secret-Fixture Hygiene
+- Annotated the 20 deliberately secret-shaped test fixtures that had been
+  blocking `forgeops audit` (exit 2) and `forgeops release-check`
+  (NOT RELEASE READY) since `2955b25` (2026-07-22), using the existing
+  per-line `forgeops:allow-secret` marker across 12 test files. **No real
+  credential was involved**: every value is a synthetic placeholder fed
+  to ForgeOps to prove it refuses or redacts secret-shaped input, so no
+  rotation and no history rewrite were required.
+- Fixture values are **unchanged** — each line still trips the detector
+  it was written to exercise. Nothing was defanged, no secret pattern was
+  weakened, no path or directory was exempted, no `allow_secret_paths`
+  config entry was added, and the `BLOCKED` exit-code semantics are
+  untouched.
+- Exemptions remain visible rather than silent: `forgeops audit` now
+  reports `58 informational, 12 pass (exit 0)` — up from `38
+  informational, 11 pass, 20 blocked (exit 2)` — with each granted
+  exemption listed by file and line. `forgeops release-check` reports
+  `RELEASE READY - 0 blocker(s), 2 warning(s) (exit 1)`; both remaining
+  warnings are expected (uncommitted working tree, `codex` not on PATH).
+- Added 31 regression tests (1350 → 1381) covering the exempted fixtures
+  behaviorally, an unmarked fixture in a test path still blocking,
+  malformed marker spellings staying inert, a file-header marker not
+  covering the rest of a file, and — newly locked in — the guarantee that
+  the marker cannot be smuggled through runtime ingestion (actors,
+  approval reasons, spec files), because `forgeops/state/*` scans those
+  under synthetic `.agent/...` paths that match no approved zone.
+- Historical validation records in `docs/phase2b-validation.md` and
+  `docs/phase2c-validation.md` were **clarified, not rewritten**: their
+  clean audit results were true when measured, and now carry dated notes
+  explaining the later drift and this correction.
+
 ### Package Namespace Cleanup
 - Removed two vestigial one-line packages, `forgeops/agents/` and
   `forgeops/approvals/`, created by the Phase 1 scaffolding commit

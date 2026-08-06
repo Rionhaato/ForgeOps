@@ -70,7 +70,7 @@ def test_result_file_secret_content_is_a_conflict(initialized_repo, tmp_path):
     task_id = _create_full(initialized_repo)
     _set_validation_status(initialized_repo, task_id, VALIDATION_STATUS_PASSED)
     f = tmp_path / "result.md"
-    f.write_text("key: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")
+    f.write_text("key: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")  # forgeops:allow-secret
     plan = _plan(initialized_repo, task_id, f)
     assert any(c.key == "result-file-secret-detected" for c in plan.conflicts)
 

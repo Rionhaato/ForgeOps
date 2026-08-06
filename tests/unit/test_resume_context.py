@@ -95,7 +95,7 @@ def test_state_data_is_read_but_current_state_file_still_reported_as_present(git
 def test_secret_shaped_next_action_is_redacted(git_repo):
     _write_state(git_repo, {
         "schema_version": 1,
-        "next_action": "retry after refreshing Bearer abcdefghijklmnop1234567890 token",
+        "next_action": "retry after refreshing Bearer abcdefghijklmnop1234567890 token",  # forgeops:allow-secret
     })
     doc = build_resume_context(git_repo)
     assert "abcdefghijklmnop1234567890" not in doc["next_action"]
@@ -105,7 +105,7 @@ def test_secret_shaped_next_action_is_redacted(git_repo):
 def test_secret_shaped_blocker_description_is_redacted(git_repo):
     _write_state(git_repo, {
         "schema_version": 1,
-        "blockers": [{"description": "log leaked Bearer abcdefghijklmnop1234567890 in output", "severity": "high"}],
+        "blockers": [{"description": "log leaked Bearer abcdefghijklmnop1234567890 in output", "severity": "high"}],  # forgeops:allow-secret
     })
     doc = build_resume_context(git_repo)
     assert "abcdefghijklmnop1234567890" not in doc["unresolved_blockers"][0]["description"]

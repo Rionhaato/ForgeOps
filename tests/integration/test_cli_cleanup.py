@@ -216,7 +216,7 @@ def test_human_output(git_repo, monkeypatch):
 
 
 def test_secret_sanitization(git_repo, monkeypatch):
-    proc = _proc(command_line=f"python -m server --repo {git_repo} --token Bearer abcdefghijklmnop1234")
+    proc = _proc(command_line=f"python -m server --repo {git_repo} --token Bearer abcdefghijklmnop1234")  # forgeops:allow-secret
     monkeypatch.setattr("forgeops.cli.cleanup.list_os_processes", lambda: _discovery([proc]))
     monkeypatch.setattr("forgeops.cli.cleanup.load_registry", lambda repo: RegistryDocument(records=[]))
     result = run_cleanup(str(git_repo), write_log=False)

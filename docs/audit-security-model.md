@@ -116,6 +116,38 @@ deliberately on a specific line inside a specific, approved directory —
 not a directory-level or file-level blanket exclusion, and never a
 production-source bypass.
 
+### The marker is not a runtime bypass
+
+The marker governs **scanning this repository's own source files**. It
+grants nothing at runtime. Every ingestion path in `forgeops/state/*`
+that scans user-supplied content — approval actors and reasons, task
+spec/acceptance/result files, `SPEC.md`/`TASK.json` consistency checks —
+deliberately passes a synthetic relative path under `.agent/` (for
+example `.agent/tasks/<id>/__actor__`,
+`.agent/tasks/__pending__/--spec-file`). Those paths match no approved
+zone, so `_path_is_exemption_eligible` returns False and the marker is
+inert: a user who writes `forgeops:allow-secret` into their own spec file
+or approval reason is still refused. The synthetic paths are built from
+hard-coded labels, never from user input, so the zone cannot be steered.
+Covered adversarially by
+`test_marker_is_inert_on_the_synthetic_paths_runtime_ingestion_uses`,
+`test_spec_file_cannot_self_exempt_with_an_allow_secret_marker`, and
+`test_request_approval_reason_carrying_an_allow_secret_marker_is_still_refused`.
+
+### Fixture hygiene is an ongoing obligation
+
+A secret-shaped test fixture added *without* a marker blocks
+`forgeops audit` (exit 2) and therefore `forgeops release-check`, even
+though it is harmless. This is intended — eligibility by path never
+grants an exemption on its own, only the explicit per-line marker does
+(`test_unmarked_synthetic_value_in_a_test_path_is_still_a_finding`). It
+also means the gate can drift silently: between `2955b25` and `5c9622f`
+(2026-07-22 to 2026-07-25) the repository accumulated 20 such fixtures
+and the audit was blocked the whole time while older validation records
+still read "clean". When adding a fixture that must stay secret-shaped,
+annotate the line in the same change, and re-run
+`python -m forgeops audit` before recording any validation result.
+
 ## Known limitations
 
 - **Pattern-based, not semantic.** The scanner cannot tell a real AWS key

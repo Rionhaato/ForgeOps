@@ -132,7 +132,7 @@ def test_create_oversized_source_file(initialized_repo, tmp_path, monkeypatch):
 
 def test_create_secret_content_rejected(initialized_repo, tmp_path):
     f = tmp_path / "spec.md"
-    f.write_text("key: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")
+    f.write_text("key: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")  # forgeops:allow-secret
     result = run_task_create("My Task", str(initialized_repo), write_log=False, spec_file=str(f))
     assert result.exit_code == exit_codes.BLOCKED
     assert any(c["key"] == "spec-file-secret-detected" for c in result.data["conflicts"])
@@ -448,7 +448,7 @@ def test_close_result_contains_secret_like_content(initialized_repo, tmp_path):
     _fill_spec(initialized_repo, task_id)
     _set_validation_passed(initialized_repo, task_id)
     result_file = tmp_path / "result.md"
-    result_file.write_text("token: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")
+    result_file.write_text("token: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")  # forgeops:allow-secret
     result = run_task_close(task_id, str(initialized_repo), write_log=False, confirm=True, result_file=str(result_file))
     assert result.exit_code == exit_codes.BLOCKED
     assert any(c["key"] == "result-file-secret-detected" for c in result.data["conflicts"])

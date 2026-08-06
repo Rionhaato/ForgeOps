@@ -206,7 +206,7 @@ def test_secret_like_content_in_spec_is_a_blocker(initialized_repo):
     task_id = _create(initialized_repo)
     task_dir = task_dir_for(initialized_repo, task_id)
     text = (task_dir / "SPEC.md").read_text(encoding="utf-8")
-    (task_dir / "SPEC.md").write_text(text + "\nsecret: AKIAABCDEFGHIJKLMNOP\n", encoding="utf-8")
+    (task_dir / "SPEC.md").write_text(text + "\nsecret: AKIAABCDEFGHIJKLMNOP\n", encoding="utf-8")  # forgeops:allow-secret
     outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
     assert any(i.key == "spec-secret-content" for i in outcome.blockers)
 
@@ -632,7 +632,7 @@ def test_approval_history_secret_like_reason_is_a_blocker(initialized_repo):
     _request_approval(initialized_repo, task_id)
     task_json_path = task_dir / "TASK.json"
     payload = json.loads(task_json_path.read_text(encoding="utf-8"))
-    payload["approval_history"][0]["reason"] = "key is AKIAABCDEFGHIJKLMNOP"
+    payload["approval_history"][0]["reason"] = "key is AKIAABCDEFGHIJKLMNOP"  # forgeops:allow-secret
     task_json_path.write_text(json.dumps(payload), encoding="utf-8")
     outcome = validate_task(initialized_repo, task_id, True, _resolve_ok)
     assert any(i.key == "approval-history-secret-reason" for i in outcome.blockers)

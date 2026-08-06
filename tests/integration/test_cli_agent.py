@@ -66,7 +66,7 @@ def test_register_invalid_id_refused(initialized_repo):
 
 
 def test_register_secret_like_id_refused(initialized_repo):
-    result = run_agent_register("sk-abcdefghijklmnopqrstuvwxyz", "claude", str(initialized_repo), write_log=False)
+    result = run_agent_register("sk-abcdefghijklmnopqrstuvwxyz", "claude", str(initialized_repo), write_log=False)  # forgeops:allow-secret
     assert result.exit_code == exit_codes.BLOCKED
     assert any(c["key"] == "agent-id-secret-detected" for c in result.data["conflicts"])
 
@@ -74,7 +74,7 @@ def test_register_secret_like_id_refused(initialized_repo):
 def test_register_secret_like_display_name_refused(initialized_repo):
     result = run_agent_register(
         "claude-primary", "claude", str(initialized_repo), write_log=False,
-        display_name="key: AKIAABCDEFGHIJKLMNOP",
+        display_name="key: AKIAABCDEFGHIJKLMNOP",  # forgeops:allow-secret
     )
     assert result.exit_code == exit_codes.BLOCKED
     assert any(c["key"] == "display-name-secret-detected" for c in result.data["conflicts"])

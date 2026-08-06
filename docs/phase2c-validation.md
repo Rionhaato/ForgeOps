@@ -16,6 +16,19 @@ Up from Phase 2B's 250 (169 unit / 81 integration): +50 tests for
 
 ## Quality gate commands run, in order, with results
 
+> **Point-in-time record (2026-07-22).** The results below were accurate
+> when measured at this checkpoint, including gate 3's clean audit and
+> gate 6's `RELEASE READY`. Both later drifted: starting with `2955b25`
+> (2026-07-22, after this run), subsequent checkpoints added
+> secret-shaped test fixtures without the `forgeops:allow-secret` marker,
+> so `forgeops audit` began exiting 2 with 20 blocked findings and
+> `forgeops release-check` reported NOT RELEASE READY. Those findings were
+> all synthetic test inputs — no real credential, no rotation, no history
+> rewrite — and were annotated in the 2026-07-25 Synthetic Secret-Fixture
+> Hygiene checkpoint, restoring `58 informational, 12 pass (exit 0)` and
+> `RELEASE READY - 0 blocker(s), 2 warning(s) (exit 1)`. This section is
+> preserved as written; see `.agent/DECISIONS.md` for the correction.
+
 1. **Full test suite**: `python -m pytest tests -q` -> 300 passed, zero regressions to the 250 tests accepted at the Phase 2B checkpoint.
 2. **Syntax validation**: `python -m compileall -q forgeops tests` -> exit 0.
 3. **`forgeops audit` against ForgeOps itself**: `38 informational, 12 pass (exit 0)`.

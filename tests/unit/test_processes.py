@@ -122,7 +122,7 @@ def test_command_line_is_redacted(monkeypatch):
             return ProcResult(args=tuple(args), returncode=0, stdout="", stderr="", timed_out=False, error=None)
         payload = (
             '[{"ProcessId":42,"ParentProcessId":1,"Name":"test.exe",'
-            '"CommandLine":"test.exe --token Bearer abcdefghij1234567890",'
+            '"CommandLine":"test.exe --token Bearer abcdefghij1234567890",'  # forgeops:allow-secret
             '"CreationDate":"/Date(1784754813299)/"}]'
         )
         return ProcResult(args=tuple(args), returncode=0, stdout=payload, stderr="", timed_out=False, error=None)

@@ -57,7 +57,7 @@ def test_duplicate_agent_id_is_a_conflict(initialized_repo):
 
 
 def test_secret_like_display_name_is_a_conflict(initialized_repo):
-    plan = build_agent_register_plan(initialized_repo, "claude-primary", "claude", "key: AKIAABCDEFGHIJKLMNOP")
+    plan = build_agent_register_plan(initialized_repo, "claude-primary", "claude", "key: AKIAABCDEFGHIJKLMNOP")  # forgeops:allow-secret
     assert any(c.key == "display-name-secret-detected" for c in plan.conflicts)
 
 

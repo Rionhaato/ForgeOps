@@ -98,7 +98,7 @@ def test_request_approval_invalid_actor_blocked(initialized_repo):
 
 def test_request_approval_secret_like_actor_blocked(initialized_repo):
     task_id = _create_task(initialized_repo)
-    result = run_task_request_approval(task_id, str(initialized_repo), write_log=False, actor="AKIAABCDEFGHIJKLMNOP")
+    result = run_task_request_approval(task_id, str(initialized_repo), write_log=False, actor="AKIAABCDEFGHIJKLMNOP")  # forgeops:allow-secret
     assert result.exit_code == exit_codes.BLOCKED
     assert any(c["key"] == "actor-secret-detected" for c in result.data["conflicts"])
 
@@ -333,7 +333,7 @@ def test_reject_secret_like_reason_blocked(initialized_repo):
     _request(initialized_repo, task_id)
     result = run_task_reject(
         task_id, str(initialized_repo), write_log=False, actor="joshua",
-        reason="the key is AKIAABCDEFGHIJKLMNOP", confirm=True,
+        reason="the key is AKIAABCDEFGHIJKLMNOP", confirm=True,  # forgeops:allow-secret
     )
     assert result.exit_code == exit_codes.BLOCKED
     assert any(c["key"] == "reason-secret-detected" for c in result.data["conflicts"])

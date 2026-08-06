@@ -17,6 +17,17 @@ exception handling, and the hardened allow-secret adversarial cases.
 
 ## Quality gate commands run, in order, with results
 
+> **Point-in-time record (2026-07-22).** The results below were accurate
+> when measured at this checkpoint. Gate 3's clean audit later drifted:
+> starting with `2955b25` (2026-07-22), subsequent checkpoints added
+> secret-shaped test fixtures without the `forgeops:allow-secret` marker,
+> and `forgeops audit` began exiting 2 with 20 blocked findings. Those
+> findings were all synthetic test inputs — no real credential, no
+> rotation, no history rewrite — and were annotated in the 2026-07-25
+> Synthetic Secret-Fixture Hygiene checkpoint, which restored a clean
+> audit (`58 informational, 12 pass, exit 0`). This section is preserved
+> as written; see `.agent/DECISIONS.md` for the correction.
+
 1. **Full test suite**: `python -m pytest tests -q` -> 250 passed.
 2. **Syntax validation**: `python -m compileall -q forgeops tests` -> exit 0.
 3. **`forgeops audit` against ForgeOps itself**: `34 informational, 12 pass (exit 0)` - clean, with every `forgeops:allow-secret` exemption in the test suite now visible as its own informational finding (34 of them), none silently absorbed.

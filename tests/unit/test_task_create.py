@@ -93,7 +93,18 @@ def test_spec_file_oversized_is_a_conflict(initialized_repo, tmp_path):
 
 def test_spec_file_secret_content_is_a_conflict(initialized_repo, tmp_path):
     f = tmp_path / "spec.md"
-    f.write_text("aws key AKIAABCDEFGHIJKLMNOP here", encoding="utf-8")
+    f.write_text("aws key AKIAABCDEFGHIJKLMNOP here", encoding="utf-8")  # forgeops:allow-secret
+    plan = build_task_create_plan(initialized_repo, "My Task", f, None, MAX_BYTES)
+    assert any(c.key == "spec-file-secret-detected" for c in plan.conflicts)
+
+
+def test_spec_file_cannot_self_exempt_with_an_allow_secret_marker(initialized_repo, tmp_path):
+    """Ingested content is scanned under a synthetic `.agent/...` path
+    that matches no approved zone, so a spec file cannot smuggle a secret
+    past preflight by annotating itself with the marker."""
+    f = tmp_path / "spec.md"
+    smuggled = "aws key AKIA" + "ABCDEFGHIJKLMNOP" + " here  # forgeops:allow-secret"
+    f.write_text(smuggled, encoding="utf-8")
     plan = build_task_create_plan(initialized_repo, "My Task", f, None, MAX_BYTES)
     assert any(c.key == "spec-file-secret-detected" for c in plan.conflicts)
 
@@ -119,7 +130,7 @@ def test_acceptance_file_script_rejected(initialized_repo, tmp_path):
 
 def test_acceptance_file_secret_content_rejected(initialized_repo, tmp_path):
     f = tmp_path / "acceptance.txt"
-    f.write_text("token: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")
+    f.write_text("token: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")  # forgeops:allow-secret
     plan = build_task_create_plan(initialized_repo, "My Task", None, f, MAX_BYTES)
     assert any(c.key == "acceptance-file-secret-detected" for c in plan.conflicts)
 
@@ -248,7 +259,7 @@ def test_apply_index_write_failure_still_reports_ok(initialized_repo, monkeypatc
 
 def test_apply_never_persists_rejected_secret_content(initialized_repo, tmp_path):
     f = tmp_path / "spec.md"
-    f.write_text("token: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")
+    f.write_text("token: AKIAABCDEFGHIJKLMNOP", encoding="utf-8")  # forgeops:allow-secret
     plan = build_task_create_plan(initialized_repo, "My Task", f, None, MAX_BYTES)
     assert plan.has_conflict is True
     task_dir = initialized_repo / ".agent" / "tasks" / "task-0001"

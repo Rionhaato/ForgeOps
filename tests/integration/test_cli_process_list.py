@@ -68,7 +68,7 @@ def test_weak_executable_name_only_match_remains_ineligible(git_repo, monkeypatc
 
 
 def test_sanitized_command_output(git_repo, monkeypatch):
-    proc = _proc(command_line=f"python -m server --repo {git_repo} --token Bearer abcdefghijklmnop1234")
+    proc = _proc(command_line=f"python -m server --repo {git_repo} --token Bearer abcdefghijklmnop1234")  # forgeops:allow-secret
     monkeypatch.setattr("forgeops.cli.process_list.list_os_processes", lambda: _discovery([proc]))
     result = run_process_list(str(git_repo), write_log=False)
     assert "abcdefghijklmnop1234" not in result.to_json()

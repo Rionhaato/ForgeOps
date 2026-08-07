@@ -914,3 +914,42 @@ failure) and `scope=broad`/fallback (reports only) branches are both
 implemented, but only the `scope=broad` branch has been exercised live
 so far — proving the `scope=narrow` execute-and-possibly-block path live
 is the natural follow-up, not done as part of this checkpoint.
+
+## 2026-08-07 — posttoolsuse_targeted_tests.py checked a scope value the planner never emits; found by doing the follow-up above, not by re-reading the code
+
+Executing the follow-up recorded immediately above — proving the hook's
+real-execution branch live — surfaced that it was unreachable. The hook
+gated real execution on `plan.get("scope") == "narrow"`.
+`forgeops/testing/planner.py` never emits `"narrow"`; its whole
+vocabulary is `"none" | "targeted" | "broad" | "mixed"` (confirmed by
+reading the module directly and by `grep -rn narrow forgeops/`, which
+returns only unrelated English words — "narrower", "narrowed subset" —
+in three unrelated files). The condition was therefore always true, and
+the hook always took the report-and-skip path, even for a perfectly
+targeted single-file change with a direct test pairing. This had been
+true since the hook was written and survived this session's own earlier
+validation of it (see the entry above), because that validation proved
+the report-and-skip branch worked, not that the alternative branch was
+reachable at all.
+
+**Decision: fix the condition to check `"targeted"`, and prove both
+branches live before considering the hook validated.** Read-only code
+review is not sufficient evidence that a conditional branch executes —
+only firing it for real is. After the fix: a throwaway single-file
+paired edit (`forgeops/core/paths.py` <-> `tests/unit/test_paths.py`)
+produced a real `pytest tests/unit/test_paths.py` subprocess run (16
+passed, 2.968s, logged at `logs/test/20260807-162357/python-pytest.log`)
+with the hook staying silent per its exit-0-on-success design; a
+deliberate one-line break of `is_protected_reference_path` (`return
+False` unconditionally) produced a real failing run and a genuine
+PostToolUse block decision, immediately reverted. Both branches are now
+proven live, not just read. The fix itself was reviewed by the
+`checkpoint-diff-reviewer` subagent before commit, which independently
+re-derived the planner's scope enum from `forgeops/testing/planner.py`
+rather than trusting this description — MATCHES, no findings — committed
+`32b3e23`.
+
+The lesson worth keeping: a script that branches on another program's
+output field is a claim about that field's contract, and the claim needs
+its own citation (a comment pointing at the producing code, or a shared
+constant) rather than trusting memory of what the value "should" be.

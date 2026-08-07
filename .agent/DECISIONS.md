@@ -863,3 +863,54 @@ weaken the patterns, do not exempt paths.**
 
 No real credential was found at any point; no rotation or history
 rewrite was required.
+
+## 2026-08-07 — CLAUDE.md's canonical logic-location list corrected
+
+Section 5 ("Architecture rules") had drifted: it named `forgeops/core`,
+`forgeops/detectors`, `forgeops/security`, `forgeops/testing` as the
+only places logic lives, but `forgeops/state` (19 modules — task,
+worktree, agent, and approval registries/lifecycles), `forgeops/worktrees`,
+and `forgeops/reporting` had grown real logic across multiple prior
+checkpoints without the list ever being updated. `forgeops/hooks` and
+`forgeops/integrations` were deliberately left out — they remain empty
+forward-looking placeholders, not yet holding real logic.
+
+Documentation-only correction: no code, schema, CLI behavior, or test
+changed. Verified with `python -m compileall -q forgeops tests` and
+`python -m forgeops doctor` (unchanged: 8 pass, 1 pre-existing warning
+for codex CLI not on PATH).
+
+## 2026-08-07 — Checkpoint review formalized as a subagent + skill + hook, validated live before its first commit
+
+A `checkpoint-diff-reviewer` subagent, `checkpoint-review` skill, and
+`posttoolsuse_targeted_tests.py` PostToolUse hook existed uncommitted in
+the working tree at session start, written in a prior session but never
+run or recorded here. Rather than commit code that had only been read,
+not exercised, this session validated it for real first: live-fired the
+hook via a throwaway one-line edit to `forgeops/core/paths.py`
+(immediately reverted), confirming it correctly plans via
+`forgeops test --targeted --plan --json` before running anything, and
+correctly skipped automatic execution on `scope=broad` exactly per its
+own documented design; then used the `checkpoint-review` skill itself,
+for real, on both of this session's own checkpoints before committing
+them — dogfooding the tool being validated.
+
+**Decision: formalize checkpoint-diff review as a dedicated read-only
+subagent (`Read`/`Grep`/`Glob` only, no `Bash`/`Edit`/`Write`, no commit
+authority) rather than eyeballing diffs inline in the main session.**
+Isolating the file-by-file comparison keeps a large multi-file diff out
+of the orchestrating session's context, and the subagent's narrow tool
+set makes it structurally incapable of fixing what it finds — it can
+only report. In its first real run it caught a genuine defect: this
+session's own `CURRENT_STATE.json`/`HANDOFF.md` edits described the
+CLAUDE.md checkpoint as both "committed as d72009c" (in `next_action`)
+and "uncommitted pending review" (in its own `completed_work` bullet) in
+the same file — corrected before commit as a direct result of this
+review.
+
+The `posttoolsuse_targeted_tests.py` hook's `scope=narrow` (actually
+runs `forgeops test --targeted` and can emit a `block` decision on
+failure) and `scope=broad`/fallback (reports only) branches are both
+implemented, but only the `scope=broad` branch has been exercised live
+so far — proving the `scope=narrow` execute-and-possibly-block path live
+is the natural follow-up, not done as part of this checkpoint.

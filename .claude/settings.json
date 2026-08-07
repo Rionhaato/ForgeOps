@@ -13,6 +13,19 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/posttoolsuse_targeted_tests.py"],
+            "timeout": 75
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

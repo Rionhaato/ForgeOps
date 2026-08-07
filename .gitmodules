@@ -1,0 +1,3 @@
+[submodule "project-rocky"]
+	path = project-rocky
+	url = https://github.com/Rionhaato/project-rocky.git

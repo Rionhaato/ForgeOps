@@ -20,8 +20,15 @@ suite. That is correct, conservative behavior on ForgeOps' side, but it
 is far too slow to run synchronously inside a PostToolUse hook. This
 script therefore always plans first (`--plan --json`, cheap, read-only,
 no test execution) and only actually runs tests when the plan comes
-back `scope: narrow` - a `broad`/fallback plan is reported, not
-executed. This means the hook goes quiet (plan-only, no test run)
+back `scope: targeted` - a `broad`/`mixed`/fallback plan is reported,
+not executed. (ForgeOps' own planner - forgeops/testing/planner.py -
+only ever emits "none" | "targeted" | "broad" | "mixed"; an earlier
+version of this hook checked for a `scope: "narrow"` value that does
+not exist in the planner's vocabulary, which made the real-execution
+and block-on-failure branches below unreachable dead code until this
+was caught by live-firing the hook and cross-checking against the
+planner source, not by reading this script alone.) This means the hook
+goes quiet (plan-only, no test run)
 whenever the working tree has other unpaired changes sitting in it,
 which is expected, not a bug.
 
@@ -104,7 +111,7 @@ def main() -> int:
         print("forgeops-targeted-test-hook: could not parse plan output, skipping", file=sys.stderr)
         return 0
 
-    if plan.get("scope") != "narrow" or plan.get("fallback"):
+    if plan.get("scope") != "targeted" or plan.get("fallback"):
         print(
             "forgeops-targeted-test-hook: plan broadened to scope="
             f"{plan.get('scope')} (fallback={plan.get('fallback')}) - too slow to run "
@@ -124,7 +131,7 @@ def main() -> int:
     except subprocess.TimeoutExpired:
         print(
             f"forgeops-targeted-test-hook: test --targeted timed out after "
-            f"{RUN_TIMEOUT_SECONDS}s for {file_path} (plan had reported scope=narrow)",
+            f"{RUN_TIMEOUT_SECONDS}s for {file_path} (plan had reported scope=targeted)",
             file=sys.stderr,
         )
         return 0

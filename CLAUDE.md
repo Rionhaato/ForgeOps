@@ -50,7 +50,8 @@ Never re-derive a fact that one of these already records.
 - CLI handlers (`forgeops/cli/*.py`) stay thin: parse args, call a
   `run_*` function, render the result. All logic lives in
   `forgeops/core`, `forgeops/detectors`, `forgeops/security`,
-  `forgeops/testing`.
+  `forgeops/testing`, `forgeops/state`, `forgeops/worktrees`,
+  `forgeops/reporting`.
 - Every `run_*` function is a pure function of its arguments (no
   `sys.argv`, `print`, or `sys.exit`) so it is directly unit-testable.
 - All repository-inspection commands (`doctor`, `status`, `audit`,

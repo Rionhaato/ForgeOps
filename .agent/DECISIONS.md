@@ -953,3 +953,69 @@ The lesson worth keeping: a script that branches on another program's
 output field is a claim about that field's contract, and the claim needs
 its own citation (a comment pointing at the producing code, or a shared
 constant) rather than trusting memory of what the value "should" be.
+
+## 2026-08-12 — task_ownership.py's four apply functions corrupted approval_history's object types on every unrelated ownership mutation
+
+`apply_task_assign`/`apply_task_unassign`/`apply_task_assign_agent`/
+`apply_task_unassign_agent` (`forgeops/state/task_ownership.py`) each
+reconstructed the updated `TaskRecord` via `TaskRecord(**{**original
+.to_dict(), "some_field": new_value, "updated_at": now})`.
+`TaskRecord.to_dict()` serializes `approval_history`
+(`list[ApprovalEvent]`) into plain dicts for JSON output; unpacking that
+dict straight back into the constructor stored those plain dicts
+directly into the `approval_history` field for every call that didn't
+explicitly override it — which none of these four calls ever did, since
+none of them touch approval state. The corrupted record then raised
+`AttributeError: 'dict' object has no attribute 'to_dict'` the next time
+anything called `.to_dict()` on it (inside `save_task_record`, via
+`[e.to_dict() for e in self.approval_history]`) — but only once
+`approval_history` was non-empty, which is why all 1381 pre-existing
+tests passed: none of them assigned a worktree or agent to a task that
+had already been through `request-approval`/`approve`. Reproduced
+directly against branch tip `a357633`: create a task, request-approval +
+approve it, create a worktree, call `apply_task_assign` — raises inside
+`save_task_record -> record.to_dict() -> approval_history` list
+comprehension.
+
+**Decision: replace the `TaskRecord(**{**original.to_dict(), ...})`
+pattern with `dataclasses.replace(original, field=value, ...)` in all
+four functions.** `dataclasses.replace` copies every untouched field as
+its real object rather than round-tripping it through `to_dict()`/dict
+unpacking, so `approval_history` stays a `list[ApprovalEvent]`
+regardless of which fields a given call overrides. Verified the fix
+catches the bug for real, not just in theory: reverted the fix, ran the
+new regression tests, watched all four fail with the exact
+`AttributeError` above; restored the fix, watched all four pass.
+`WorktreeRecord`/`AgentRecord` reconstructions elsewhere in the same
+file use the identical `X(**{**r.to_dict(), ...})` shape but were left
+untouched — both dataclasses hold only primitives (`str`, `list[str]`,
+`dict[str, str]`), no nested dataclass objects, so the round-trip is
+lossless for them. `forgeops/state/task_approval.py`'s
+`_apply_approval_transition` uses the same `to_dict()`-unpacking shape
+too, but was also left untouched: it always explicitly overrides
+`approval_history` with a freshly built list of real `ApprovalEvent`
+objects, so the round-trip issue never applies there. Same fix already
+independently applied to `task_execution.py`'s `apply_task_run` on the
+sibling `feature/agent-execution` branch (same bug, same root cause,
+found and fixed there first). Added regression tests to
+`tests/unit/test_task_ownership.py` and
+`tests/unit/test_task_agent_ownership.py` covering all four functions
+against a task with pre-existing `approval_history`, asserting the
+record round-trips through save+load without corruption. No documented
+behavior changed — `docs/tasks.md`/`docs/approvals.md` already describe
+assignment as never touching approvals; the bug crashed the operation
+in-memory before anything corrupted ever reached disk, so the documented
+invariant was never actually violated in a way visible on disk, only in
+the crash it produced.
+
+Unrelated to the bug itself: while this fix was in progress, `git
+reflog` and an unfamiliar stash (`"wip: agent-execution feature,
+relocating to isolated worktree"`) showed another session's git
+commands landing in this exact same working directory concurrently,
+moving `HEAD` back to `feature/agent-execution` mid-session. No work was
+lost — both stashes and this branch survived intact — but it's worth
+flagging as a real hazard: two sessions issuing `git` commands against
+one shared working copy (as opposed to separate worktrees) can silently
+interleave `HEAD`/index state. Responded by committing this fix
+immediately (`de75d4c`) rather than leaving it as loose working-tree
+state exposed to further interleaving.

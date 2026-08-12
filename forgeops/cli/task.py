@@ -52,6 +52,11 @@ from forgeops.state.task_ownership import (
     build_task_unassign_agent_plan,
     build_task_unassign_plan,
 )
+from forgeops.state.task_execution import (
+    DEFAULT_RUN_TIMEOUT_SECONDS,
+    apply_task_run,
+    build_task_run_plan,
+)
 from forgeops.state.task_registry import (
     TASKS_DIR_RELATIVE,
     TASK_ID_RE,
@@ -866,6 +871,141 @@ def run_task_unassign_agent(
     return _finish(repo_root, "task-unassign-agent", checks, data, exit_code, summary, clock, write_log)
 
 
+# --- task run -------------------------------------------------------------------
+
+
+def run_task_run(
+    task_id: str,
+    repo_arg: str | None,
+    cwd: Path | None = None,
+    clock: Clock | None = None,
+    write_log: bool = True,
+    actor: str = "",
+    timeout: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+    dry_run: bool = False,
+    confirm: bool = False,
+    executable_override: list[str] | None = None,
+) -> CommandResult:
+    """The single most consequential command in ForgeOps: launches a
+    real `claude`/`codex` subprocess capable of arbitrary file edits and
+    shell commands. Confirmation-gated like `task close`/`worktree
+    remove` even though nothing is deleted - `--dry-run` needs no
+    confirmation and launches nothing; a real run without `--confirm`
+    only previews (zero mutation, zero process launched).
+    `executable_override` exists purely for tests - see
+    `forgeops/state/task_execution.py`'s module docstring."""
+    if git_version() is None:
+        return _no_git_result("task-run", clock)
+    try:
+        repo_root = resolve_repo_root(repo_arg, cwd)
+    except RepoNotFoundError as exc:
+        return _repo_not_found_result("task-run", exc, clock)
+
+    blocked = _repo_level_block(repo_root, "task-run", clock, write_log)
+    if blocked is not None:
+        return blocked
+
+    checks: list[Check] = [Check("repo-discovery", "Repository discovery", "pass", str(repo_root))]
+    plan = build_task_run_plan(repo_root, task_id, actor, timeout)
+
+    if plan.conflicts:
+        for c in plan.conflicts:
+            checks.append(Check(f"preflight-{c.key}", f"Preflight: {c.key}", "blocked", c.message))
+    else:
+        checks.append(Check("preflight", "Preflight", "pass", "no conflicts detected"))
+
+    data: dict = {
+        "dry_run": dry_run,
+        "confirm": confirm,
+        "task_id": task_id,
+        "actor": actor,
+        "timeout": timeout,
+        "agent_id": plan.agent_record.agent_id if plan.agent_record else None,
+        "worktree_id": plan.worktree_record.name if plan.worktree_record else None,
+        "resolved_executable": plan.resolved_executable,
+        "conflicts": [{"key": c.key, "message": c.message} for c in plan.conflicts],
+        "would_proceed": not plan.has_conflict,
+    }
+
+    if plan.has_conflict:
+        data["action"] = "blocked"
+        exit_code = exit_codes.BLOCKED
+        summary = f"task run: blocked by {len(plan.conflicts)} conflict(s) (exit {exit_code})"
+        return _finish(repo_root, "task-run", checks, data, exit_code, summary, clock, write_log)
+
+    if dry_run:
+        data["action"] = "would_run"
+        checks.append(Check(
+            "write", "Task run", "informational",
+            f"dry-run: would launch '{plan.resolved_executable}' against worktree "
+            f"'{data['worktree_id']}' for task '{task_id}' - no process was started",
+        ))
+        exit_code = exit_codes.SUCCESS
+        summary = f"task run: dry-run, would run {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-run", checks, data, exit_code, summary, clock, write_log)
+
+    if not confirm:
+        data["action"] = "confirmation_required"
+        checks.append(Check(
+            "confirmation-required", "Confirmation required", "blocked",
+            "task run launches a real, unsandboxed agent process capable of arbitrary file edits and shell "
+            "commands - pass --confirm to execute, or --dry-run to preview with zero mutation",
+        ))
+        exit_code = exit_codes.BLOCKED
+        summary = f"task run: confirmation required for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-run", checks, data, exit_code, summary, clock, write_log)
+
+    outcome = apply_task_run(repo_root, plan, clock, executable_override, write_log)
+    if not outcome.ok:
+        data["action"] = "run_failed"
+        data["partial_state"] = outcome.partial_state
+        data["manual_recovery_recommendation"] = (
+            f"Inspect `{task_dir_for(repo_root, task_id)}/TASK.json` directly - execution state may be "
+            "partially updated. forgeops does not retry or force-replace automatically; resolve manually "
+            "before retrying."
+        )
+        checks.append(Check("write", "Task run", "fail", f"run did not fully complete: {outcome.partial_state}"))
+        exit_code = exit_codes.COMMAND_EXECUTION_FAILURE
+        summary = f"task run: failed for {task_id} (exit {exit_code})"
+        return _finish(repo_root, "task-run", checks, data, exit_code, summary, clock, write_log)
+
+    data["exit_code"] = outcome.exit_code
+    data["timed_out"] = outcome.timed_out
+    data["log_path"] = outcome.log_path
+    data["index_written"] = outcome.index_written
+
+    process_succeeded = outcome.exit_code == 0 and not outcome.timed_out
+    if process_succeeded:
+        data["action"] = "run_completed"
+        checks.append(Check(
+            "write", "Task run", "pass",
+            f"'{task_id}' ran to completion (exit 0); status is now 'validation_pending'",
+        ))
+        warnings_present = False
+    else:
+        data["action"] = "run_did_not_succeed"
+        reason = "timed out" if outcome.timed_out else f"exited {outcome.exit_code}"
+        checks.append(Check(
+            "write", "Task run", "warning",
+            f"'{task_id}' {reason}; status is now 'blocked' - see {outcome.log_path}",
+        ))
+        warnings_present = True
+
+    if outcome.index_error:
+        data["index_error"] = outcome.index_error
+        checks.append(Check("index-write", "Task index write", "warning", f"run succeeded but index was not updated: {outcome.index_error}"))
+        warnings_present = True
+    else:
+        checks.append(Check("index-write", "Task index write", "pass", "index updated"))
+
+    exit_code = exit_codes.WARNINGS_PRESENT if warnings_present else exit_codes.SUCCESS
+    summary = (
+        f"task run: {task_id} finished (process exit={outcome.exit_code}, "
+        f"timed_out={outcome.timed_out}) (exit {exit_code})"
+    )
+    return _finish(repo_root, "task-run", checks, data, exit_code, summary, clock, write_log)
+
+
 # --- task request-approval / approve / reject / cancel-approval --------------------
 
 
@@ -1245,6 +1385,8 @@ def render_human(result: CommandResult) -> str:
         return _render_human_assign_agent(result)
     if result.command == "task-unassign-agent":
         return _render_human_unassign_agent(result)
+    if result.command == "task-run":
+        return _render_human_run(result)
     if result.command == "task-request-approval":
         return _render_human_approval_action(result, "forgeops task request-approval")
     if result.command == "task-approve":
@@ -1401,6 +1543,26 @@ def _render_human_assign_agent(result: CommandResult) -> str:
         lines.append("warnings:")
         for w in d["warnings"]:
             lines.append(f"  - {w['key']}: {w['message']}")
+    if d.get("partial_state") is not None:
+        lines.append(f"partial state after failure: {d['partial_state']}")
+        lines.append(f"recovery: {d.get('manual_recovery_recommendation')}")
+    return "\n".join(lines)
+
+
+def _render_human_run(result: CommandResult) -> str:
+    from forgeops.cli.render import render_checks
+    lines = ["forgeops task run", f"summary: {result.summary}", ""]
+    lines.extend(render_checks(result.checks))
+    d = result.data
+    lines.append("")
+    lines.append(f"task: {d.get('task_id')}  agent: {d.get('agent_id')}  worktree: {d.get('worktree_id')}")
+    lines.append(f"would proceed: {d.get('would_proceed')}")
+    if "exit_code" in d:
+        lines.append(f"process exit code: {d.get('exit_code')}  timed out: {d.get('timed_out')}  log: {d.get('log_path')}")
+    if d.get("conflicts"):
+        lines.append("conflicts:")
+        for c in d["conflicts"]:
+            lines.append(f"  - {c['key']}: {c['message']}")
     if d.get("partial_state") is not None:
         lines.append(f"partial state after failure: {d['partial_state']}")
         lines.append(f"recovery: {d.get('manual_recovery_recommendation')}")

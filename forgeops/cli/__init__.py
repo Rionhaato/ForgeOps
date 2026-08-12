@@ -139,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="also delete the ForgeOps-owned branch via a normal, non-force `git branch -d` (requires --confirm)",
     )
 
-    task_sub = subparsers.add_parser("task", help="forgeops task create | show | list | validate | close | assign | unassign | assign-agent | unassign-agent | request-approval | approve | reject | cancel-approval")
+    task_sub = subparsers.add_parser("task", help="forgeops task create | show | list | validate | close | assign | unassign | assign-agent | unassign-agent | run | request-approval | approve | reject | cancel-approval")
     task_subparsers = task_sub.add_subparsers(dest="task_command", required=True)
 
     task_create_sub = task_subparsers.add_parser("create", help="forgeops task create TITLE")
@@ -200,6 +200,15 @@ def build_parser() -> argparse.ArgumentParser:
     task_unassign_agent_sub.add_argument("--json", action="store_true")
     task_unassign_agent_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be unassigned, mutate nothing")
     task_unassign_agent_sub.add_argument("--confirm", action="store_true", help="actually perform the unassignment (required unless --dry-run)")
+
+    task_run_sub = task_subparsers.add_parser("run", help="forgeops task run TASK_ID --actor ACTOR")
+    task_run_sub.add_argument("task_id", help="task ID, e.g. task-0001")
+    task_run_sub.add_argument("--actor", required=True, help="explicit human actor authorizing this run - never inferred")
+    task_run_sub.add_argument("--timeout", type=float, default=None, help="seconds to wait for the agent process (default: 3600)")
+    task_run_sub.add_argument("--repo", default=None)
+    task_run_sub.add_argument("--json", action="store_true")
+    task_run_sub.add_argument("--dry-run", dest="dry_run", action="store_true", help="show what would be launched, start nothing")
+    task_run_sub.add_argument("--confirm", action="store_true", help="actually launch the agent process (required unless --dry-run)")
 
     task_request_approval_sub = task_subparsers.add_parser("request-approval", help="forgeops task request-approval TASK_ID --actor ACTOR")
     task_request_approval_sub.add_argument("task_id", help="task ID, e.g. task-0001")
@@ -356,6 +365,11 @@ def _run_command(args: argparse.Namespace) -> CommandResult:
             return task_cmd.run_task_assign_agent(args.task_id, args.agent_id, args.repo, dry_run=args.dry_run)
         if args.task_command == "unassign-agent":
             return task_cmd.run_task_unassign_agent(args.task_id, args.repo, dry_run=args.dry_run, confirm=args.confirm)
+        if args.task_command == "run":
+            run_kwargs = {"actor": args.actor, "dry_run": args.dry_run, "confirm": args.confirm}
+            if args.timeout is not None:
+                run_kwargs["timeout"] = args.timeout
+            return task_cmd.run_task_run(args.task_id, args.repo, **run_kwargs)
         if args.task_command == "request-approval":
             return task_cmd.run_task_request_approval(
                 args.task_id, args.repo, actor=args.actor, reason=args.reason, dry_run=args.dry_run,

@@ -141,7 +141,7 @@ EXPECTED_TOP_LEVEL_COMMANDS = {
 
 EXPECTED_TASK_SUBCOMMANDS = {
     "create", "show", "list", "validate", "close", "assign", "unassign",
-    "assign-agent", "unassign-agent", "request-approval", "approve",
+    "assign-agent", "unassign-agent", "run", "request-approval", "approve",
     "reject", "cancel-approval",
 }
 

@@ -953,3 +953,57 @@ The lesson worth keeping: a script that branches on another program's
 output field is a claim about that field's contract, and the claim needs
 its own citation (a comment pointing at the producing code, or a shared
 constant) rather than trusting memory of what the value "should" be.
+
+## 2026-08-12 — Agent Execution Foundation (`forgeops task run`), scoped and implemented on `feature/agent-execution`
+
+First ForgeOps command that launches a real external process rather than
+only reading/writing JSON. Branched from `feature/phase2b-targeted-testing`
+(tip `a357633`) rather than continuing on it directly, since this is a
+distinct, higher-risk checkpoint. Key scoping decisions, all recorded in
+`docs/agent-execution.md` in full:
+
+1. **An assigned, live worktree is now a hard precondition** to run a
+   task (`task-no-worktree-assigned` blocks outright) — unlike `task
+   assign-agent`, where a missing worktree is only advisory. Running an
+   agent against the primary checkout would defeat the entire point of
+   the worktree system.
+2. **Synchronous, `--timeout`-bounded execution — no background process.**
+   Nothing else in ForgeOps uses `Popen`; `"claude"`/`"codex"` are
+   already hard-coded into `runtime_registry.NEVER_MANAGED_CATEGORIES`,
+   so a blocking call needs no process-registry entry at all.
+3. **`status` only ever reaches `active` (while running), `validation_pending`
+   (clean exit), or `blocked` (non-zero exit or timeout) — never
+   `completed`/`failed`.** Those two terminal statuses remain `task
+   close`'s exclusive privilege, unchanged.
+4. **The executable is injectable** (`apply_task_run(...,
+   executable_override=[...])`) so no automated test shells out to a
+   real, costly, non-deterministic `claude`/`codex` CLI. All
+   unit/integration coverage uses a deterministic
+   `[sys.executable, "-c", "..."]` script. A real launch against the
+   real `claude` CLI is validated once, by hand — procedure and status
+   tracked in `docs/agent-execution-validation.md`, **not yet
+   performed** as of this entry.
+5. **Secrets: block going in, redact coming out.** `SPEC.md`'s content
+   is secret-scanned before launch (a match refuses the run outright,
+   `spec-secret-detected`); captured stdout/stderr is always redacted
+   and persisted via the existing `LogWriter`, never used to refuse
+   recording that a run happened.
+6. **No MCP wiring by ForgeOps itself this checkpoint** — the launched
+   process inherits whatever MCP servers are already configured for
+   that CLI on the machine. ForgeOps configuring/managing MCP is a
+   separate, later, explicitly-scoped feature.
+
+Implementation note: `TaskRecord(**{**original.to_dict(), "field": value})`
+— the pattern every prior ownership/approval apply function in
+`forgeops/state/task_ownership.py`/`task_approval.py` uses to build an
+updated record — silently corrupts `approval_history`/`execution_history`
+into plain dicts instead of event objects whenever the untouched history
+list is non-empty at mutation time (harmless only because no existing
+test happens to assign ownership to an already-approved task).
+`forgeops/state/task_execution.py` uses `dataclasses.replace(original,
+field=value, ...)` instead, which has no such hazard. Confirmed by
+reproduction that `task_ownership.py`'s four apply functions have the
+identical latent bug (assign a worktree to an already-approved task ->
+`AttributeError: 'dict' object has no attribute 'to_dict'`); flagged as a
+separate follow-up task rather than fixed here, since `task_ownership.py`
+belongs to a prior, already-accepted checkpoint outside this one's scope.

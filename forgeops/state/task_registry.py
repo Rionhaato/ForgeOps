@@ -100,6 +100,21 @@ RECOGNIZED_APPROVAL_ACTIONS = frozenset({
     APPROVAL_ACTION_REJECTED, APPROVAL_ACTION_CANCELLED,
 })
 
+# `execution_history[].event` - one event per `forgeops task run` attempt,
+# append-only, never edited or deleted. Mirrors `approval_history`'s
+# shape. A "started" event is written before the subprocess launches;
+# exactly one of "completed"/"failed"/"timed_out" follows once it
+# returns (or the process could not be launched at all). See
+# `forgeops/state/task_execution.py` and docs/agent-execution.md.
+EXECUTION_EVENT_STARTED = "started"
+EXECUTION_EVENT_COMPLETED = "completed"
+EXECUTION_EVENT_FAILED = "failed"
+EXECUTION_EVENT_TIMED_OUT = "timed_out"
+RECOGNIZED_EXECUTION_EVENTS = frozenset({
+    EXECUTION_EVENT_STARTED, EXECUTION_EVENT_COMPLETED,
+    EXECUTION_EVENT_FAILED, EXECUTION_EVENT_TIMED_OUT,
+})
+
 # The complete, closed set of permitted (current_state, action) ->
 # next_state transitions - a lookup miss means "refused", not "assumed
 # invalid input"; see docs/approvals.md "State machine" for the diagram
@@ -173,6 +188,44 @@ class ApprovalEvent:
             reference=data.get("reference"),
         )
 
+
+@dataclass(frozen=True)
+class ExecutionEvent:
+    event: str
+    actor: str
+    timestamp: str
+    exit_code: int | None = None
+    timed_out: bool = False
+    duration_seconds: float | None = None
+    log_path: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event": self.event,
+            "actor": self.actor,
+            "timestamp": self.timestamp,
+            "exit_code": self.exit_code,
+            "timed_out": self.timed_out,
+            "duration_seconds": self.duration_seconds,
+            "log_path": self.log_path,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "ExecutionEvent":
+        if not isinstance(data, dict):
+            raise ValueError("execution_history entry must be an object")
+        if "event" not in data:
+            raise ValueError("execution_history entry is missing required field 'event'")
+        return ExecutionEvent(
+            event=str(data["event"]),
+            actor=str(data.get("actor", "")),
+            timestamp=str(data.get("timestamp", "")),
+            exit_code=data.get("exit_code"),
+            timed_out=bool(data.get("timed_out", False)),
+            duration_seconds=data.get("duration_seconds"),
+            log_path=data.get("log_path"),
+        )
+
 # `VALIDATION.json.status`.
 VALIDATION_STATUS_NOT_RUN = "not_run"
 VALIDATION_STATUS_PASSED = "passed"
@@ -230,6 +283,11 @@ class TaskIndexRecord:
     approval_state: str = APPROVAL_STATE_NOT_REQUESTED
     validation_state: str = VALIDATION_STATUS_NOT_RUN
     result_state: str = RESULT_STATE_PENDING
+    # Summary copy of the most recent `execution_history[].event`, or
+    # None if `task run` has never been attempted. Never authoritative -
+    # `TASK.json.execution_history` is the source of truth, exactly like
+    # every other index field here (see forgeops/state/task_execution.py).
+    last_execution_status: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -244,6 +302,7 @@ class TaskIndexRecord:
             "approval_state": self.approval_state,
             "validation_state": self.validation_state,
             "result_state": self.result_state,
+            "last_execution_status": self.last_execution_status,
         }
 
     @staticmethod
@@ -258,6 +317,7 @@ class TaskIndexRecord:
             worktree_id=data.get("worktree_id"),
             agent_id=data.get("agent_id"),
             approval_state=str(data.get("approval_state", APPROVAL_STATE_NOT_REQUESTED)),
+            last_execution_status=data.get("last_execution_status"),
             validation_state=str(data.get("validation_state", VALIDATION_STATUS_NOT_RUN)),
             result_state=str(data.get("result_state", RESULT_STATE_PENDING)),
         )
@@ -360,6 +420,7 @@ class TaskRecord:
     managed_files: list[str] = field(default_factory=list)
     validation_state: str = VALIDATION_STATUS_NOT_RUN
     result_state: str = RESULT_STATE_PENDING
+    execution_history: list[ExecutionEvent] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -384,6 +445,7 @@ class TaskRecord:
             "managed_files": list(self.managed_files),
             "validation_state": self.validation_state,
             "result_state": self.result_state,
+            "execution_history": [e.to_dict() for e in self.execution_history],
         }
 
     @staticmethod
@@ -391,6 +453,9 @@ class TaskRecord:
         raw_history = data.get("approval_history") or []
         if not isinstance(raw_history, list):
             raise ValueError("approval_history must be a list")
+        raw_execution_history = data.get("execution_history") or []
+        if not isinstance(raw_execution_history, list):
+            raise ValueError("execution_history must be a list")
         return TaskRecord(
             schema_version=int(data.get("schema_version", TASK_SCHEMA_VERSION)),
             task_id=str(data["task_id"]),
@@ -413,6 +478,7 @@ class TaskRecord:
             managed_files=list(data.get("managed_files") or []),
             validation_state=str(data.get("validation_state", VALIDATION_STATUS_NOT_RUN)),
             result_state=str(data.get("result_state", RESULT_STATE_PENDING)),
+            execution_history=[ExecutionEvent.from_dict(e) for e in raw_execution_history],
         )
 
 

@@ -3,6 +3,12 @@ plan builders and mutating apply steps behind `forgeops task
 assign`/`forgeops task unassign`."""
 from __future__ import annotations
 
+from forgeops.state.task_approval import (
+    apply_task_approve,
+    apply_task_request_approval,
+    build_task_approve_plan,
+    build_task_request_approval_plan,
+)
 from forgeops.state.task_close import apply_task_close, build_task_close_plan
 from forgeops.state.task_create import apply_task_create, build_task_create_plan
 from forgeops.state.task_ownership import (
@@ -13,6 +19,7 @@ from forgeops.state.task_ownership import (
 )
 from forgeops.state.task_registry import (
     VALIDATION_STATUS_PASSED,
+    ApprovalEvent,
     load_index as load_task_index,
     load_task_record,
     load_validation_record,
@@ -38,6 +45,11 @@ def _create_worktree(repo_root, name="demo"):
     outcome = apply_worktree_create(repo_root, plan)
     assert outcome.ok is True
     return name
+
+
+def _approve_task(repo_root, task_id, actor="joshua"):
+    apply_task_request_approval(repo_root, build_task_request_approval_plan(repo_root, task_id, actor))
+    apply_task_approve(repo_root, build_task_approve_plan(repo_root, task_id, actor))
 
 
 def _close_task(repo_root, task_id, status=VALIDATION_STATUS_PASSED):
@@ -357,3 +369,56 @@ def test_unassign_atomic_rollback_on_registry_failure(initialized_repo, monkeypa
     assert outcome.ok is False
     task_record = load_task_record(task_dir_for(initialized_repo, task_id)).record
     assert task_record.worktree_id == name  # rolled back, still assigned
+
+
+# --- regression: approval_history must survive ownership mutations ------------
+#
+# apply_task_assign/apply_task_unassign used to reconstruct TaskRecord via
+# `TaskRecord(**{**original.to_dict(), ...})`. to_dict() serializes
+# approval_history to plain dicts, so any field the call didn't explicitly
+# override - including approval_history - got stored as those plain dicts
+# instead of ApprovalEvent objects. That corrupted record then raised
+# AttributeError the next time anything called .to_dict() on it (e.g. the
+# very next save_task_record), but only once approval_history was non-empty -
+# which is why this went unnoticed until a task was approved before being
+# assigned a worktree.
+
+
+def test_assign_preserves_approval_history(initialized_repo):
+    task_id = _create_task(initialized_repo)
+    _approve_task(initialized_repo, task_id)
+    name = _create_worktree(initialized_repo)
+    plan = build_task_assign_plan(initialized_repo, task_id, name)
+    outcome = apply_task_assign(initialized_repo, plan)
+    assert outcome.ok is True
+
+    task_record = load_task_record(task_dir_for(initialized_repo, task_id)).record
+    assert [type(e) for e in task_record.approval_history] == [ApprovalEvent, ApprovalEvent]
+    assert [e.action for e in task_record.approval_history] == ["requested", "approved"]
+    # Proves the record round-trips: to_dict() would raise AttributeError
+    # if approval_history still held plain dicts instead of ApprovalEvent objects.
+    assert task_record.to_dict()["approval_history"] == [e.to_dict() for e in task_record.approval_history]
+
+    reloaded = load_task_record(task_dir_for(initialized_repo, task_id)).record
+    assert [e.action for e in reloaded.approval_history] == ["requested", "approved"]
+    assert reloaded.worktree_id == name
+
+
+def test_unassign_preserves_approval_history(initialized_repo):
+    task_id = _create_task(initialized_repo)
+    _approve_task(initialized_repo, task_id)
+    name = _create_worktree(initialized_repo)
+    apply_task_assign(initialized_repo, build_task_assign_plan(initialized_repo, task_id, name))
+
+    plan = build_task_unassign_plan(initialized_repo, task_id)
+    outcome = apply_task_unassign(initialized_repo, plan)
+    assert outcome.ok is True
+
+    task_record = load_task_record(task_dir_for(initialized_repo, task_id)).record
+    assert [type(e) for e in task_record.approval_history] == [ApprovalEvent, ApprovalEvent]
+    assert [e.action for e in task_record.approval_history] == ["requested", "approved"]
+    assert task_record.to_dict()["approval_history"] == [e.to_dict() for e in task_record.approval_history]
+
+    reloaded = load_task_record(task_dir_for(initialized_repo, task_id)).record
+    assert [e.action for e in reloaded.approval_history] == ["requested", "approved"]
+    assert reloaded.worktree_id is None

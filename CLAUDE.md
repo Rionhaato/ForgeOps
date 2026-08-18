@@ -122,3 +122,30 @@ artifacts are staged, TrendForge is verified unchanged, and
 `.agent/HANDOFF.md` is updated with the exact next action. See
 `docs/phase2a-validation.md` and `docs/phase2b-validation.md` for the
 standing example of what "validated, not assumed" looks like in this repo.
+
+## 13. Boardroom live session
+
+`#forgeops-boardroom` (Slack channel `C0BMESXCR8A`) is the cross-agent
+coordination channel — see its history for the standing FO-xxx
+dispatch/evidence format. Membership is presence-only: as of 2026-08-17
+the channel's only member is the operator's own account, and every prior
+`[CLAUDE]`/`[CODEX]` post was sent by an active session using that
+account. Neither agent runs a standing bot listener there.
+
+When Joshua says "pull up slack" or "start a boardroom session," the
+active session should:
+1. Read the channel and any open threads for activity since the last
+   session touched it.
+2. Relay and respond in the established FO-xxx format, staying inside
+   this file's §11 approval boundaries — reporting evidence or asking
+   for review is fine; pushing, deploying, or dispatching new work is
+   not, unless Joshua authorizes it in that same conversation.
+3. For the rest of that session, re-check the channel periodically
+   instead of only once at the start, and react to new messages as they
+   arrive.
+4. Stop when Joshua ends the session or says to stop.
+
+This makes the channel live only while a session is actively watching
+it — not a standing background service. An always-on multi-agent bot
+(each app auto-responding via Slack's Events API, with loop-prevention
+between agents) is a separate, larger build that has not been started.

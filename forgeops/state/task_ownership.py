@@ -20,7 +20,7 @@ updating it after both authoritative records already agree is a
 warning, never a failure)."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from forgeops.core.paths import is_protected_reference_path
@@ -281,7 +281,13 @@ def apply_task_assign(repo_root: Path, plan: TaskAssignPlan, clock: Clock | None
     now = iso_now(clock)
     task_dir = task_dir_for(repo_root, plan.task_id)
     original_task_record = plan.task_record
-    updated_task_record = TaskRecord(**{**original_task_record.to_dict(), "worktree_id": plan.worktree_name, "updated_at": now})
+    # dataclasses.replace, not `TaskRecord(**{**original.to_dict(), ...})`:
+    # to_dict() serializes approval_history to plain dicts, and unpacking
+    # that back into the constructor would silently store those plain
+    # dicts in place of ApprovalEvent objects for every field this call
+    # doesn't explicitly override - harmless only as long as the
+    # untouched list happens to be empty.
+    updated_task_record = replace(original_task_record, worktree_id=plan.worktree_name, updated_at=now)
 
     try:
         save_task_record(task_dir, updated_task_record)
@@ -411,7 +417,9 @@ def apply_task_unassign(repo_root: Path, plan: TaskUnassignPlan, clock: Clock | 
     now = iso_now(clock)
     task_dir = task_dir_for(repo_root, plan.task_id)
     original_task_record = plan.task_record
-    updated_task_record = TaskRecord(**{**original_task_record.to_dict(), "worktree_id": None, "updated_at": now})
+    # dataclasses.replace - see apply_task_assign for why not
+    # `TaskRecord(**{**original.to_dict(), ...})`.
+    updated_task_record = replace(original_task_record, worktree_id=None, updated_at=now)
 
     try:
         save_task_record(task_dir, updated_task_record)
@@ -547,7 +555,9 @@ def apply_task_assign_agent(repo_root: Path, plan: TaskAssignAgentPlan, clock: C
     now = iso_now(clock)
     task_dir = task_dir_for(repo_root, plan.task_id)
     original_task_record = plan.task_record
-    updated_task_record = TaskRecord(**{**original_task_record.to_dict(), "agent_id": plan.agent_id, "updated_at": now})
+    # dataclasses.replace - see apply_task_assign for why not
+    # `TaskRecord(**{**original.to_dict(), ...})`.
+    updated_task_record = replace(original_task_record, agent_id=plan.agent_id, updated_at=now)
 
     try:
         save_task_record(task_dir, updated_task_record)
@@ -672,7 +682,9 @@ def apply_task_unassign_agent(repo_root: Path, plan: TaskUnassignAgentPlan, cloc
     now = iso_now(clock)
     task_dir = task_dir_for(repo_root, plan.task_id)
     original_task_record = plan.task_record
-    updated_task_record = TaskRecord(**{**original_task_record.to_dict(), "agent_id": None, "updated_at": now})
+    # dataclasses.replace - see apply_task_assign for why not
+    # `TaskRecord(**{**original.to_dict(), ...})`.
+    updated_task_record = replace(original_task_record, agent_id=None, updated_at=now)
 
     try:
         save_task_record(task_dir, updated_task_record)

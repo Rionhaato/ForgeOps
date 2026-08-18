@@ -5,6 +5,12 @@ from __future__ import annotations
 
 from forgeops.state.agent_register import apply_agent_register, build_agent_register_plan
 from forgeops.state.agent_registry import STATUS_DISABLED, load_agent_registry
+from forgeops.state.task_approval import (
+    apply_task_approve,
+    apply_task_request_approval,
+    build_task_approve_plan,
+    build_task_request_approval_plan,
+)
 from forgeops.state.task_close import apply_task_close, build_task_close_plan
 from forgeops.state.task_create import apply_task_create, build_task_create_plan
 from forgeops.state.task_ownership import (
@@ -17,6 +23,7 @@ from forgeops.state.task_ownership import (
 )
 from forgeops.state.task_registry import (
     VALIDATION_STATUS_PASSED,
+    ApprovalEvent,
     load_task_record,
     load_validation_record,
     save_task_record,
@@ -47,6 +54,11 @@ def _register_agent(repo_root, agent_id="claude-primary", kind="claude"):
     outcome = apply_agent_register(repo_root, plan)
     assert outcome.ok is True
     return agent_id
+
+
+def _approve_task(repo_root, task_id, actor="joshua"):
+    apply_task_request_approval(repo_root, build_task_request_approval_plan(repo_root, task_id, actor))
+    apply_task_approve(repo_root, build_task_approve_plan(repo_root, task_id, actor))
 
 
 def _close_task(repo_root, task_id, status=VALIDATION_STATUS_PASSED):
@@ -403,3 +415,52 @@ def test_unassign_agent_no_worktree_or_git_mutation(initialized_repo):
     apply_task_unassign_agent(initialized_repo, build_task_unassign_agent_plan(initialized_repo, task_id))
     task_record = load_task_record(task_dir_for(initialized_repo, task_id)).record
     assert task_record.worktree_id == name  # untouched by agent unassignment
+
+
+# --- regression: approval_history must survive agent ownership mutations ------
+#
+# See test_task_ownership.py's identical regression tests for the full
+# explanation: apply_task_assign_agent/apply_task_unassign_agent used to
+# reconstruct TaskRecord via `TaskRecord(**{**original.to_dict(), ...})`,
+# which silently stored plain dicts in approval_history instead of
+# ApprovalEvent objects whenever that field wasn't explicitly overridden.
+
+
+def test_assign_agent_preserves_approval_history(initialized_repo):
+    task_id = _create_task(initialized_repo)
+    _approve_task(initialized_repo, task_id)
+    agent_id = _register_agent(initialized_repo)
+    plan = build_task_assign_agent_plan(initialized_repo, task_id, agent_id)
+    outcome = apply_task_assign_agent(initialized_repo, plan)
+    assert outcome.ok is True
+
+    task_record = load_task_record(task_dir_for(initialized_repo, task_id)).record
+    assert [type(e) for e in task_record.approval_history] == [ApprovalEvent, ApprovalEvent]
+    assert [e.action for e in task_record.approval_history] == ["requested", "approved"]
+    # Proves the record round-trips: to_dict() would raise AttributeError
+    # if approval_history still held plain dicts instead of ApprovalEvent objects.
+    assert task_record.to_dict()["approval_history"] == [e.to_dict() for e in task_record.approval_history]
+
+    reloaded = load_task_record(task_dir_for(initialized_repo, task_id)).record
+    assert [e.action for e in reloaded.approval_history] == ["requested", "approved"]
+    assert reloaded.agent_id == agent_id
+
+
+def test_unassign_agent_preserves_approval_history(initialized_repo):
+    task_id = _create_task(initialized_repo)
+    _approve_task(initialized_repo, task_id)
+    agent_id = _register_agent(initialized_repo)
+    apply_task_assign_agent(initialized_repo, build_task_assign_agent_plan(initialized_repo, task_id, agent_id))
+
+    plan = build_task_unassign_agent_plan(initialized_repo, task_id)
+    outcome = apply_task_unassign_agent(initialized_repo, plan)
+    assert outcome.ok is True
+
+    task_record = load_task_record(task_dir_for(initialized_repo, task_id)).record
+    assert [type(e) for e in task_record.approval_history] == [ApprovalEvent, ApprovalEvent]
+    assert [e.action for e in task_record.approval_history] == ["requested", "approved"]
+    assert task_record.to_dict()["approval_history"] == [e.to_dict() for e in task_record.approval_history]
+
+    reloaded = load_task_record(task_dir_for(initialized_repo, task_id)).record
+    assert [e.action for e in reloaded.approval_history] == ["requested", "approved"]
+    assert reloaded.agent_id is None

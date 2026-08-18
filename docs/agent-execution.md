@@ -140,6 +140,27 @@ returns. This is scoped narrowly:
   this change. The "MCP: ... automatically available" behavior above
   still holds; only the operator's personal hook/plugin config is kept
   from silently interfering with an automated launch.
+- **Authentication is preserved by copying the on-disk credential.**
+  FO-010 real-launch validation (2026-08-18) found that
+  `CLAUDE_CONFIG_DIR` is a full replacement for `~/.claude`, not just
+  its hooks - the session credential lives at
+  `<CLAUDE_CONFIG_DIR>/.credentials.json`, so a bare empty isolated
+  directory logged the launched process out entirely (`claude` exited
+  1, "Not logged in", instead of ever reaching the model). The fix
+  copies just that one file into the isolated directory before launch;
+  `settings.json`/hooks/plugins are still deliberately not copied.
+  If `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` is set in the
+  operator's environment - the documented headless-auth path, which
+  needs no credentials file at all - it's already preserved without
+  any extra handling, since the isolated launch's environment is a
+  copy of the full parent environment with only `CLAUDE_CONFIG_DIR`
+  overridden.
+- **Known limitation:** if `claude` refreshes the session credential
+  during the run, the refreshed token is written to the isolated
+  copy, not the operator's real `.credentials.json`, and is lost when
+  the isolated directory is removed afterward. This is a pre-existing
+  short-lived-token risk, not something this isolation introduces;
+  using `CLAUDE_CODE_OAUTH_TOKEN` instead avoids it entirely.
 
 ## Secrets: block going in, redact coming out
 

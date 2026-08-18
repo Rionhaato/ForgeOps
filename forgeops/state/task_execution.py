@@ -29,7 +29,9 @@ reasoning behind the choices this module encodes:
   `codex` CLI."""
 from __future__ import annotations
 
+import os
 import shutil
+import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -280,8 +282,29 @@ def apply_task_run(
 
     args = executable_override or [fresh_plan.resolved_executable, "-p", fresh_plan.prompt]
     worktree_path = Path(fresh_plan.worktree_record.path)
+
+    # Isolate `claude`-kind launches from the operator's own Claude Code
+    # config (hooks, plugins, MCP servers): without this, a launched
+    # subprocess reads the same ~/.claude as the interactive session
+    # that started `forgeops task run`, so a hook like claude-mem's
+    # UserPromptSubmit can intercept the prompt before the model ever
+    # sees it - `claude` still exits 0, so the run is recorded as
+    # `validation_pending` (looks successful) even though nothing
+    # happened. See docs/agent-execution.md's CLAUDE_CONFIG_DIR
+    # isolation section. `codex` has no equivalent config-dir env var to
+    # isolate, so this only applies to KIND_CLAUDE.
+    isolated_config_dir: str | None = None
+    run_env: dict[str, str] | None = None
+    if fresh_plan.agent_record.kind == KIND_CLAUDE:
+        isolated_config_dir = tempfile.mkdtemp(prefix="forgeops-claude-config-")
+        run_env = {**os.environ, "CLAUDE_CONFIG_DIR": isolated_config_dir}
+
     start_perf = time.monotonic()
-    proc_result = run_subprocess(args, cwd=worktree_path, timeout=plan.timeout)
+    try:
+        proc_result = run_subprocess(args, cwd=worktree_path, timeout=plan.timeout, env=run_env)
+    finally:
+        if isolated_config_dir is not None:
+            shutil.rmtree(isolated_config_dir, ignore_errors=True)
     duration_seconds = time.monotonic() - start_perf
 
     log_path: str | None = None

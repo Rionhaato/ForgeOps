@@ -110,6 +110,37 @@ skipped.
   recent event's name - never authoritative, exactly like every other
   index field.
 
+## CLAUDE_CONFIG_DIR isolation for `claude`-kind launches
+
+A launched subprocess inherits the full parent environment by default
+(`forgeops.core.subprocess_utils.run`'s `env=None` behavior, unchanged
+for every caller except this one) - so without isolation, a `claude`
+launch reads the exact same `~/.claude` as the operator's own
+interactive session, hooks and all. Real-execution validation on
+2026-08-14 (see `docs/agent-execution-validation.md`) found this
+causes a genuine correctness bug: a personal hook (claude-mem's
+`UserPromptSubmit`) intercepted the launched process's prompt before
+the model saw it, and `claude` still exited 0 - so the run was
+recorded as `validation_pending` (looks successful) even though
+nothing happened.
+
+To prevent this, `apply_task_run` builds a fresh, empty, disposable
+directory per run (`tempfile.mkdtemp`) and points a `claude`-kind
+launch's `CLAUDE_CONFIG_DIR` at it instead of inheriting the
+operator's. The directory is removed again once the subprocess
+returns. This is scoped narrowly:
+
+- **Only `claude`-kind launches are affected.** `codex` has no
+  equivalent config-dir env var, so `codex`-kind launches still
+  inherit the parent environment unchanged.
+- **Only hooks/plugins/settings are isolated, not MCP availability.**
+  `~/.claude/settings.json` (hooks) lives under `CLAUDE_CONFIG_DIR`,
+  but user-scope MCP server registrations live in the sibling
+  `~/.claude.json`, resolved via `HOME`/`USERPROFILE` - untouched by
+  this change. The "MCP: ... automatically available" behavior above
+  still holds; only the operator's personal hook/plugin config is kept
+  from silently interfering with an automated launch.
+
 ## Secrets: block going in, redact coming out
 
 The prompt (`SPEC.md`'s content) is scanned with

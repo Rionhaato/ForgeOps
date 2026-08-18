@@ -14,9 +14,14 @@ each time.
 
 ## Order of operations
 
-1. Confirm the working directory is actually `C:\Users\joshd\ForgeOps`,
-   not the read-only reference repository - re-`cd` explicitly rather
-   than trusting shell state to have persisted.
+1. Confirm the working directory is actually a ForgeOps checkout, not
+   the read-only reference repository - run `git rev-parse
+   --show-toplevel` and compare it against the reference repo path(s)
+   documented in this repo's `CLAUDE.md` section 6 (currently
+   `TrendForge`) - re-`cd` to the toplevel explicitly rather than
+   trusting shell state to have persisted. This repo is cloned on
+   multiple machines under different usernames, so never hardcode a
+   specific machine's absolute path here.
 2. Read the checkpoint's own description of itself: the newest
    `.agent/HANDOFF.md` "Completed work" entry, the matching
    `CHANGELOG.md` section, and/or the newest `.agent/DECISIONS.md`

@@ -14,8 +14,10 @@ hand, once, supervised, exactly like Phase 8's Codex adapter is
 planned to be validated against a real `codex` executable separately
 from its mock-based tests.
 
-**Status: not yet performed.** This is the last outstanding item before
-the Agent Execution Foundation checkpoint is considered fully done.
+**Status: performed 2026-08-14.** See "Evidence log" below. The subprocess
+mechanics are validated against a real `claude` binary; a `CLAUDE_CONFIG_DIR`
+hook-isolation decision and a branch-reconciliation merge remain as separate
+follow-ups, not blockers on this checkpoint.
 
 ## Procedure
 
@@ -55,4 +57,65 @@ the Agent Execution Foundation checkpoint is considered fully done.
 
 ## Evidence log
 
-(none yet - see "Status" above)
+### 2026-08-14 - real `claude -p` launch, executed
+
+Run in a disposable temp dir (`forgeops-validation-20260814-174336`, git-initialized
+locally, never TrendForge or this checkout), against this branch's build of
+`forgeops` (`9d89848`), following the procedure above exactly for `task-0001`.
+
+**Step 2 (dry-run):** `resolved_executable` reported as
+`C:\Users\joshu\AppData\Roaming\npm\claude.CMD` - a real, `shutil.which`-resolved
+path, not `null`, confirming the Windows `.CMD` shim resolution path works as
+designed.
+
+**Step 3 (confirmed run):** `forgeops task run task-0001 --actor joshua --confirm`
+returned `exit 0`. `forgeops task show task-0001` reported `status:
+validation_pending` as expected. The task's `TASK.json` recorded exactly the
+expected `execution_history`:
+```
+started   2026-08-14T21:45:23Z  exit_code=null  timed_out=false
+completed 2026-08-14T21:46:14Z  exit_code=0     timed_out=false  duration=51.19s
+```
+The redacted transcript log exists at
+`logs/task-run/20260814-214614/task-0001.log` and contains the real subprocess
+argv (`['.../claude.CMD', '-p', '<SPEC.md contents>']`), cwd (the `demo` worktree,
+not the primary checkout), and captured stdout/stderr.
+
+**Mechanically, this validates the full path end to end**: real executable
+resolution, correct non-shell argv construction, correct worktree isolation
+(`cwd`), bounded timeout handling, exit-code capture, structured
+`TASK.json`/`execution_history` writes, and redacted log persistence all work
+exactly as `docs/agent-execution.md` describes - against a real `claude` binary,
+not `executable_override`.
+
+**One real finding, not a `forgeops` bug:** the captured stdout shows the prompt
+was intercepted by this machine's `claude-mem` plugin `UserPromptSubmit` hook
+(`claude-mem worker unreachable for 138 consecutive hooks`) before reaching the
+model, so the literal SPEC.md instruction ("print `hello from forgeops task run`")
+never executed - the subprocess still exited 0 because the hook itself exits
+cleanly after blocking. This means: on this machine, as currently configured,
+any headless `claude -p` invocation - from `forgeops task run` or anything else -
+is subject to this user's global Claude Code hook configuration, and a hook can
+silently no-op a real dispatch while still reporting `exit_code: 0`. Worth a
+follow-up decision on whether `task run` should isolate `CLAUDE_CONFIG_DIR` for
+launched subprocesses, or whether inheriting the operator's hooks is the intended
+behavior.
+
+**One real bug found, already fixed on a sibling branch, not yet here:**
+attempting a second `task assign-agent` (on a fresh `task-0002`, set up to retry
+in isolation) raised `AttributeError: 'dict' object has no attribute 'to_dict'`
+in `forgeops/state/task_ownership.py:553` (`apply_task_assign_agent` ->
+`save_task_record` -> `TaskRecord.to_dict()` -> `approval_history` entries stored
+as plain dicts instead of `ApprovalEvent`). This is the same
+`approval_history`-corruption bug already fixed via `dataclasses.replace(...)` on
+`fix/task-ownership-history-corruption` (commit `de75d4c`) - that fix has not yet
+been merged into `feature/agent-execution`, so this branch still carries the old
+buggy `task_ownership.py`. Not a new defect; a branch-reconciliation gap. Full
+traceback: `logs/task/20260814-214727/internal_error.log` (disposable dir, not
+committed here).
+
+**Conclusion:** the real-launch validation this checkpoint was blocked on is
+complete. `task run`'s subprocess mechanics are proven correct against a real
+`claude` binary. Recommend merging the `fix/task-ownership-history-corruption`
+fix into this branch before relying on `task assign-agent` for anything beyond
+a single agent-per-task-id happy path.

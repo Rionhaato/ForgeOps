@@ -447,6 +447,40 @@ def test_apply_run_claude_kind_copies_credentials_but_not_hooks_into_isolated_di
     assert seen["dir"] != str(real_config_dir)
 
 
+def test_apply_run_claude_kind_falls_back_to_default_config_dir_for_credentials(
+    initialized_repo, monkeypatch, tmp_path,
+):
+    """FO-010 round 2: a controlled test harness overrode CLAUDE_CONFIG_DIR
+    to a directory containing only settings.json/hooks, with no
+    credentials file there at all - unlike a real hook installation,
+    which always lives inside the real ~/.claude alongside the real
+    credentials. The fix falls back to the ~/.claude default for
+    credentials when the active override doesn't have any there."""
+    override_dir_without_credentials = tmp_path / "override-hooks-only"
+    override_dir_without_credentials.mkdir()
+    (override_dir_without_credentials / "settings.json").write_text(
+        '{"hooks": {"UserPromptSubmit": [{"command": "block-the-prompt"}]}}', encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(override_dir_without_credentials))
+
+    fake_home = tmp_path / "fake-home"
+    real_default_config_dir = fake_home / ".claude"
+    real_default_config_dir.mkdir(parents=True)
+    (real_default_config_dir / ".credentials.json").write_text(
+        '{"token": "default-dir-credential"}', encoding="utf-8",
+    )
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+
+    task_id, worktree_name, _ = _ready_task(initialized_repo, agent_kind=KIND_CLAUDE)
+    plan = build_task_run_plan(initialized_repo, task_id, "joshua")
+    outcome = apply_task_run(initialized_repo, plan, executable_override=_CREDENTIAL_MARKER_SCRIPT, write_log=False)
+    assert outcome.ok is True
+
+    seen = json.loads((Path(plan.worktree_record.path) / "marker.txt").read_text(encoding="utf-8"))
+    assert seen["credentials"] == '{"token": "default-dir-credential"}'
+    assert seen["settings_present"] is False
+
+
 def test_apply_run_codex_kind_is_not_touched_by_claude_config_isolation(initialized_repo, monkeypatch):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", "operators-real-config-dir-with-hooks")
     # codex isn't necessarily on this test runner's PATH; only the

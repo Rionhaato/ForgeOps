@@ -93,12 +93,31 @@ EXECUTABLE_BY_KIND: dict[str, str] = {
 CLAUDE_CREDENTIALS_FILENAME = ".credentials.json"
 
 
-def _resolve_real_claude_config_dir() -> Path:
-    """Where `claude` itself resolves CLAUDE_CONFIG_DIR to, absent our
-    own override: an existing override already in the environment, else
-    the documented `~/.claude` default."""
+def _find_real_claude_credentials() -> Path | None:
+    """Locate the operator's real session credential to copy into an
+    isolated launch. Tries an active `CLAUDE_CONFIG_DIR` override
+    first, since that's where `claude` itself would look - but an
+    override doesn't guarantee credentials live there too (FO-010
+    round 2: a test harness overrode CLAUDE_CONFIG_DIR to isolate only
+    settings.json/hooks, with no credentials file at that path at all -
+    a real hook installation, in contrast, always lives inside the
+    documented `~/.claude` default alongside the real credentials, so
+    falling back there covers both that harness shape and any other
+    override that doesn't happen to carry credentials). Returns None
+    if neither location has one."""
+    candidate_dirs: list[Path] = []
     override = os.environ.get("CLAUDE_CONFIG_DIR")
-    return Path(override) if override else Path.home() / ".claude"
+    if override:
+        candidate_dirs.append(Path(override))
+    default_dir = Path.home() / ".claude"
+    if not candidate_dirs or candidate_dirs[0] != default_dir:
+        candidate_dirs.append(default_dir)
+
+    for candidate_dir in candidate_dirs:
+        candidate = candidate_dir / CLAUDE_CREDENTIALS_FILENAME
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 @dataclass(frozen=True)
@@ -331,8 +350,8 @@ def apply_task_run(
             # must still clean up the directory we just created, not
             # leak it - the finally below covers this whole block, not
             # only the subprocess launch.
-            real_credentials = _resolve_real_claude_config_dir() / CLAUDE_CREDENTIALS_FILENAME
-            if real_credentials.is_file():
+            real_credentials = _find_real_claude_credentials()
+            if real_credentials is not None:
                 shutil.copy2(real_credentials, Path(isolated_config_dir) / CLAUDE_CREDENTIALS_FILENAME)
             run_env = {**os.environ, "CLAUDE_CONFIG_DIR": isolated_config_dir}
 

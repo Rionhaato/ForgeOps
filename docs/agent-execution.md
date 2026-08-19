@@ -155,6 +155,18 @@ returns. This is scoped narrowly:
   any extra handling, since the isolated launch's environment is a
   copy of the full parent environment with only `CLAUDE_CONFIG_DIR`
   overridden.
+- **The credential lookup falls back to `~/.claude` if the active
+  `CLAUDE_CONFIG_DIR` doesn't have one.** FO-010 round 2 (2026-08-19)
+  found the first version of this fix still failed when
+  `CLAUDE_CONFIG_DIR` was already overridden to a location that has
+  hooks/settings but no credentials - a real hook installation never
+  actually looks like that (hooks and credentials always coexist in
+  the real `~/.claude`), but the override could still legitimately
+  point somewhere else for other reasons. `_find_real_claude_credentials()`
+  now tries the active override first, and if that location has no
+  `.credentials.json`, falls back to checking the `~/.claude` default -
+  using the first location that actually has one, or copying nothing
+  if neither does.
 - **Known limitation:** if `claude` refreshes the session credential
   during the run, the refreshed token is written to the isolated
   copy, not the operator's real `.credentials.json`, and is lost when

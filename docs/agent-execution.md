@@ -110,6 +110,70 @@ skipped.
   recent event's name - never authoritative, exactly like every other
   index field.
 
+## CLAUDE_CONFIG_DIR isolation for `claude`-kind launches
+
+A launched subprocess inherits the full parent environment by default
+(`forgeops.core.subprocess_utils.run`'s `env=None` behavior, unchanged
+for every caller except this one) - so without isolation, a `claude`
+launch reads the exact same `~/.claude` as the operator's own
+interactive session, hooks and all. Real-execution validation on
+2026-08-14 (see `docs/agent-execution-validation.md`) found this
+causes a genuine correctness bug: a personal hook (claude-mem's
+`UserPromptSubmit`) intercepted the launched process's prompt before
+the model saw it, and `claude` still exited 0 - so the run was
+recorded as `validation_pending` (looks successful) even though
+nothing happened.
+
+To prevent this, `apply_task_run` builds a fresh, empty, disposable
+directory per run (`tempfile.mkdtemp`) and points a `claude`-kind
+launch's `CLAUDE_CONFIG_DIR` at it instead of inheriting the
+operator's. The directory is removed again once the subprocess
+returns. This is scoped narrowly:
+
+- **Only `claude`-kind launches are affected.** `codex` has no
+  equivalent config-dir env var, so `codex`-kind launches still
+  inherit the parent environment unchanged.
+- **Only hooks/plugins/settings are isolated, not MCP availability.**
+  `~/.claude/settings.json` (hooks) lives under `CLAUDE_CONFIG_DIR`,
+  but user-scope MCP server registrations live in the sibling
+  `~/.claude.json`, resolved via `HOME`/`USERPROFILE` - untouched by
+  this change. The "MCP: ... automatically available" behavior above
+  still holds; only the operator's personal hook/plugin config is kept
+  from silently interfering with an automated launch.
+- **Authentication is preserved by copying the on-disk credential.**
+  FO-010 real-launch validation (2026-08-18) found that
+  `CLAUDE_CONFIG_DIR` is a full replacement for `~/.claude`, not just
+  its hooks - the session credential lives at
+  `<CLAUDE_CONFIG_DIR>/.credentials.json`, so a bare empty isolated
+  directory logged the launched process out entirely (`claude` exited
+  1, "Not logged in", instead of ever reaching the model). The fix
+  copies just that one file into the isolated directory before launch;
+  `settings.json`/hooks/plugins are still deliberately not copied.
+  If `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` is set in the
+  operator's environment - the documented headless-auth path, which
+  needs no credentials file at all - it's already preserved without
+  any extra handling, since the isolated launch's environment is a
+  copy of the full parent environment with only `CLAUDE_CONFIG_DIR`
+  overridden.
+- **The credential lookup falls back to `~/.claude` if the active
+  `CLAUDE_CONFIG_DIR` doesn't have one.** FO-010 round 2 (2026-08-19)
+  found the first version of this fix still failed when
+  `CLAUDE_CONFIG_DIR` was already overridden to a location that has
+  hooks/settings but no credentials - a real hook installation never
+  actually looks like that (hooks and credentials always coexist in
+  the real `~/.claude`), but the override could still legitimately
+  point somewhere else for other reasons. `_find_real_claude_credentials()`
+  now tries the active override first, and if that location has no
+  `.credentials.json`, falls back to checking the `~/.claude` default -
+  using the first location that actually has one, or copying nothing
+  if neither does.
+- **Known limitation:** if `claude` refreshes the session credential
+  during the run, the refreshed token is written to the isolated
+  copy, not the operator's real `.credentials.json`, and is lost when
+  the isolated directory is removed afterward. This is a pre-existing
+  short-lived-token risk, not something this isolation introduces;
+  using `CLAUDE_CODE_OAUTH_TOKEN` instead avoids it entirely.
+
 ## Secrets: block going in, redact coming out
 
 The prompt (`SPEC.md`'s content) is scanned with

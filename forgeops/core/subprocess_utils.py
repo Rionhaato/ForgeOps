@@ -48,9 +48,17 @@ def run(
     args: list[str],
     cwd: Path | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    env: dict[str, str] | None = None,
 ) -> ProcResult:
     """Run args as a subprocess. Never raises: a missing executable or a
-    timeout is reported in the returned ProcResult, not as an exception."""
+    timeout is reported in the returned ProcResult, not as an exception.
+
+    `env=None` (the default) inherits the full parent environment, same
+    as before this parameter existed - every existing caller is
+    unaffected. Callers that need to isolate a launched process from the
+    parent's environment (e.g. a personal Claude Code hook/plugin
+    config that shouldn't apply to an automated launch) pass an
+    explicit env dict instead."""
     resolved_args = [_resolve_executable(args[0]), *args[1:]] if args else args
     try:
         proc = subprocess.run(
@@ -60,6 +68,7 @@ def run(
             text=True,
             timeout=timeout,
             shell=False,
+            env=env,
         )
         return ProcResult(
             args=tuple(args),

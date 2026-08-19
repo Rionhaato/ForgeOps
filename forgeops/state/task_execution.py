@@ -29,7 +29,9 @@ reasoning behind the choices this module encodes:
   `codex` CLI."""
 from __future__ import annotations
 
+import os
 import shutil
+import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -82,6 +84,40 @@ EXECUTABLE_BY_KIND: dict[str, str] = {
     KIND_CLAUDE: "claude",
     KIND_CODEX: "codex",
 }
+
+# FO-010 real-launch validation (2026-08-18) found that CLAUDE_CONFIG_DIR
+# is a full replacement for ~/.claude, not just its hooks/settings - the
+# on-disk session credential lives at <CLAUDE_CONFIG_DIR>/.credentials.json,
+# so isolating the whole directory also logs the launched process out.
+# See docs/agent-execution.md's CLAUDE_CONFIG_DIR isolation section.
+CLAUDE_CREDENTIALS_FILENAME = ".credentials.json"
+
+
+def _find_real_claude_credentials() -> Path | None:
+    """Locate the operator's real session credential to copy into an
+    isolated launch. Tries an active `CLAUDE_CONFIG_DIR` override
+    first, since that's where `claude` itself would look - but an
+    override doesn't guarantee credentials live there too (FO-010
+    round 2: a test harness overrode CLAUDE_CONFIG_DIR to isolate only
+    settings.json/hooks, with no credentials file at that path at all -
+    a real hook installation, in contrast, always lives inside the
+    documented `~/.claude` default alongside the real credentials, so
+    falling back there covers both that harness shape and any other
+    override that doesn't happen to carry credentials). Returns None
+    if neither location has one."""
+    candidate_dirs: list[Path] = []
+    override = os.environ.get("CLAUDE_CONFIG_DIR")
+    if override:
+        candidate_dirs.append(Path(override))
+    default_dir = Path.home() / ".claude"
+    if not candidate_dirs or candidate_dirs[0] != default_dir:
+        candidate_dirs.append(default_dir)
+
+    for candidate_dir in candidate_dirs:
+        candidate = candidate_dir / CLAUDE_CREDENTIALS_FILENAME
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 @dataclass(frozen=True)
@@ -280,8 +316,50 @@ def apply_task_run(
 
     args = executable_override or [fresh_plan.resolved_executable, "-p", fresh_plan.prompt]
     worktree_path = Path(fresh_plan.worktree_record.path)
-    start_perf = time.monotonic()
-    proc_result = run_subprocess(args, cwd=worktree_path, timeout=plan.timeout)
+
+    # Isolate `claude`-kind launches from the operator's own Claude Code
+    # config (hooks, plugins): without this, a launched subprocess reads
+    # the same ~/.claude as the interactive session that started
+    # `forgeops task run`, so a hook like claude-mem's UserPromptSubmit
+    # can intercept the prompt before the model ever sees it - `claude`
+    # still exits 0, so the run is recorded as `validation_pending`
+    # (looks successful) even though nothing happened. `codex` has no
+    # equivalent config-dir env var to isolate, so this only applies to
+    # KIND_CLAUDE.
+    #
+    # The on-disk session credential (CLAUDE_CREDENTIALS_FILENAME) is
+    # copied into the fresh directory so the launch stays authenticated -
+    # a bare empty CLAUDE_CONFIG_DIR logs the process out entirely
+    # (FO-010). settings.json/hooks/plugins are deliberately not copied;
+    # that's the isolation. If ANTHROPIC_API_KEY or
+    # CLAUDE_CODE_OAUTH_TOKEN is set, that's the documented headless-auth
+    # path and needs no credentials file at all - already preserved
+    # below via the full environment copy. Note: a token refresh during
+    # the run writes back to the copy, not the operator's real
+    # credentials file, so it's lost on cleanup - a pre-existing
+    # short-lived risk, not introduced by this isolation.
+    isolated_config_dir: str | None = None
+    run_env: dict[str, str] | None = None
+    if fresh_plan.agent_record.kind == KIND_CLAUDE:
+        isolated_config_dir = tempfile.mkdtemp(prefix="forgeops-claude-config-")
+
+    try:
+        if isolated_config_dir is not None:
+            # Inside the try, not just the mkdtemp above: a failure here
+            # (permission error, the credentials file vanishing mid-copy)
+            # must still clean up the directory we just created, not
+            # leak it - the finally below covers this whole block, not
+            # only the subprocess launch.
+            real_credentials = _find_real_claude_credentials()
+            if real_credentials is not None:
+                shutil.copy2(real_credentials, Path(isolated_config_dir) / CLAUDE_CREDENTIALS_FILENAME)
+            run_env = {**os.environ, "CLAUDE_CONFIG_DIR": isolated_config_dir}
+
+        start_perf = time.monotonic()
+        proc_result = run_subprocess(args, cwd=worktree_path, timeout=plan.timeout, env=run_env)
+    finally:
+        if isolated_config_dir is not None:
+            shutil.rmtree(isolated_config_dir, ignore_errors=True)
     duration_seconds = time.monotonic() - start_perf
 
     log_path: str | None = None

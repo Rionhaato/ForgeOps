@@ -7,11 +7,14 @@ No test here ever shells out to a real `claude`/`codex` CLI -
 used throughout to simulate success/failure/timeout deterministically."""
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 
 from forgeops.state.agent_register import apply_agent_register, build_agent_register_plan
 from forgeops.state.agent_registry import (
     KIND_CLAUDE,
+    KIND_CODEX,
     KIND_SPECIALIST,
     STATUS_DISABLED,
     load_agent_registry,
@@ -376,3 +379,117 @@ def test_apply_run_uses_worktree_path_as_cwd(initialized_repo):
     marker = Path(worktree_path) / "marker.txt"
     assert marker.is_file()
     assert Path(marker.read_text(encoding="utf-8")).resolve() == Path(worktree_path).resolve()
+
+
+# --- apply: claude-kind launches are isolated from the operator's Claude Code config ---
+
+
+_ENV_MARKER_SCRIPT = [
+    sys.executable, "-c",
+    "import os; open('marker.txt', 'w').write(os.environ.get('CLAUDE_CONFIG_DIR', ''))",
+]
+
+
+def test_apply_run_claude_kind_does_not_inherit_operators_claude_config_dir(initialized_repo, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "operators-real-config-dir-with-hooks")
+    task_id, worktree_name, _ = _ready_task(initialized_repo, agent_kind=KIND_CLAUDE)
+    plan = build_task_run_plan(initialized_repo, task_id, "joshua")
+    outcome = apply_task_run(initialized_repo, plan, executable_override=_ENV_MARKER_SCRIPT, write_log=False)
+    assert outcome.ok is True
+    seen = (Path(plan.worktree_record.path) / "marker.txt").read_text(encoding="utf-8")
+    assert seen != ""
+    assert seen != "operators-real-config-dir-with-hooks"
+
+
+def test_apply_run_isolated_claude_config_dir_is_removed_after_run(initialized_repo):
+    task_id, worktree_name, _ = _ready_task(initialized_repo, agent_kind=KIND_CLAUDE)
+    plan = build_task_run_plan(initialized_repo, task_id, "joshua")
+    outcome = apply_task_run(initialized_repo, plan, executable_override=_ENV_MARKER_SCRIPT, write_log=False)
+    assert outcome.ok is True
+    isolated_dir = (Path(plan.worktree_record.path) / "marker.txt").read_text(encoding="utf-8")
+    assert isolated_dir != ""
+    assert not Path(isolated_dir).exists()
+
+
+_CREDENTIAL_MARKER_SCRIPT = [
+    sys.executable, "-c",
+    "import os, json as j; d = os.environ.get('CLAUDE_CONFIG_DIR', ''); "
+    "cp = os.path.join(d, '.credentials.json'); sp = os.path.join(d, 'settings.json'); "
+    "cred = open(cp, encoding='utf-8').read() if os.path.isfile(cp) else None; "
+    "open('marker.txt', 'w', encoding='utf-8').write(j.dumps({'dir': d, 'credentials': cred, 'settings_present': os.path.isfile(sp)}))",
+]
+
+
+def test_apply_run_claude_kind_copies_credentials_but_not_hooks_into_isolated_dir(
+    initialized_repo, monkeypatch, tmp_path,
+):
+    """FO-010 real-launch validation found a bare empty CLAUDE_CONFIG_DIR
+    logs the launched process out entirely (`claude` exited 1, "Not
+    logged in"). The fix copies just the on-disk session credential
+    into the isolated dir - this pins that settings.json (hooks) is
+    still deliberately excluded, only auth is preserved."""
+    real_config_dir = tmp_path / "operators-real-claude-config"
+    real_config_dir.mkdir()
+    (real_config_dir / "settings.json").write_text(
+        '{"hooks": {"UserPromptSubmit": [{"command": "block-the-prompt"}]}}', encoding="utf-8",
+    )
+    (real_config_dir / ".credentials.json").write_text('{"token": "fixture-credential"}', encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real_config_dir))
+
+    task_id, worktree_name, _ = _ready_task(initialized_repo, agent_kind=KIND_CLAUDE)
+    plan = build_task_run_plan(initialized_repo, task_id, "joshua")
+    outcome = apply_task_run(initialized_repo, plan, executable_override=_CREDENTIAL_MARKER_SCRIPT, write_log=False)
+    assert outcome.ok is True
+
+    seen = json.loads((Path(plan.worktree_record.path) / "marker.txt").read_text(encoding="utf-8"))
+    assert seen["credentials"] == '{"token": "fixture-credential"}'
+    assert seen["settings_present"] is False
+    assert seen["dir"] != str(real_config_dir)
+
+
+def test_apply_run_claude_kind_falls_back_to_default_config_dir_for_credentials(
+    initialized_repo, monkeypatch, tmp_path,
+):
+    """FO-010 round 2: a controlled test harness overrode CLAUDE_CONFIG_DIR
+    to a directory containing only settings.json/hooks, with no
+    credentials file there at all - unlike a real hook installation,
+    which always lives inside the real ~/.claude alongside the real
+    credentials. The fix falls back to the ~/.claude default for
+    credentials when the active override doesn't have any there."""
+    override_dir_without_credentials = tmp_path / "override-hooks-only"
+    override_dir_without_credentials.mkdir()
+    (override_dir_without_credentials / "settings.json").write_text(
+        '{"hooks": {"UserPromptSubmit": [{"command": "block-the-prompt"}]}}', encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(override_dir_without_credentials))
+
+    fake_home = tmp_path / "fake-home"
+    real_default_config_dir = fake_home / ".claude"
+    real_default_config_dir.mkdir(parents=True)
+    (real_default_config_dir / ".credentials.json").write_text(
+        '{"token": "default-dir-credential"}', encoding="utf-8",
+    )
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+
+    task_id, worktree_name, _ = _ready_task(initialized_repo, agent_kind=KIND_CLAUDE)
+    plan = build_task_run_plan(initialized_repo, task_id, "joshua")
+    outcome = apply_task_run(initialized_repo, plan, executable_override=_CREDENTIAL_MARKER_SCRIPT, write_log=False)
+    assert outcome.ok is True
+
+    seen = json.loads((Path(plan.worktree_record.path) / "marker.txt").read_text(encoding="utf-8"))
+    assert seen["credentials"] == '{"token": "default-dir-credential"}'
+    assert seen["settings_present"] is False
+
+
+def test_apply_run_codex_kind_is_not_touched_by_claude_config_isolation(initialized_repo, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "operators-real-config-dir-with-hooks")
+    # codex isn't necessarily on this test runner's PATH; only the
+    # preflight's executable-resolvability check needs to pass here -
+    # executable_override replaces the actual launch args below.
+    monkeypatch.setattr("forgeops.state.task_execution.shutil.which", lambda name: name)
+    task_id, worktree_name, _ = _ready_task(initialized_repo, agent_kind=KIND_CODEX)
+    plan = build_task_run_plan(initialized_repo, task_id, "joshua")
+    outcome = apply_task_run(initialized_repo, plan, executable_override=_ENV_MARKER_SCRIPT, write_log=False)
+    assert outcome.ok is True
+    seen = (Path(plan.worktree_record.path) / "marker.txt").read_text(encoding="utf-8")
+    assert seen == "operators-real-config-dir-with-hooks"
